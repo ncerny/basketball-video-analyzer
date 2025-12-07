@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.api import video_upload
+from app.api import timeline
 
 app = FastAPI(
     title="Basketball Video Analyzer API",
@@ -24,7 +24,7 @@ app.add_middleware(
 )
 
 # Include API routers
-app.include_router(video_upload.router, prefix="/api")
+app.include_router(timeline.router, prefix="/api")
 
 
 @app.get("/")
