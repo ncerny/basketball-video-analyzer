@@ -6,3 +6,4 @@ pydantic>=2.5.3
 pydantic-settings>=2.1.0
 python-multipart>=0.0.6
 aiosqlite>=0.19.0
+greenlet>=3.0.0
