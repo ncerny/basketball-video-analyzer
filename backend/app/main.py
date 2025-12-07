@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
+from app.api import game_rosters
 
 app = FastAPI(
     title="Basketball Video Analyzer API",
@@ -21,6 +22,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include API routers
+app.include_router(game_rosters.router, prefix="/api")
 
 
 @app.get("/")
