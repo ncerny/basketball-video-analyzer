@@ -18,7 +18,7 @@ from pathlib import Path
 # Add parent directory to path to import app modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from sqlalchemy import select, text
+from sqlalchemy import text
 
 from app.database import async_session_maker
 from app.models import (
@@ -49,6 +49,55 @@ async def clear_all_data() -> None:
         await session.execute(text("DELETE FROM games"))
         await session.commit()
         print("✓ Cleared all existing data")
+
+
+def assign_players_to_game(
+    session: any, game_id: int, home_team_players: list[Player], away_team_players: list[Player]
+) -> int:
+    """Assign players to a game with their team sides."""
+    roster_count = 0
+
+    for player in home_team_players:
+        roster = GameRoster(
+            game_id=game_id,
+            player_id=player.id,
+            team_side=TeamSide.HOME,
+        )
+        session.add(roster)
+        roster_count += 1
+
+    for player in away_team_players:
+        roster = GameRoster(
+            game_id=game_id,
+            player_id=player.id,
+            team_side=TeamSide.AWAY,
+        )
+        session.add(roster)
+        roster_count += 1
+
+    return roster_count
+
+
+def link_annotations_to_videos(session: any, annotations: list[Annotation], videos: list[Video]) -> None:
+    """Link annotations to their corresponding videos with timestamp calculations."""
+    for annotation in annotations:
+        for video in videos:
+            video_start = video.game_time_offset or 0.0
+            video_end = video_start + video.duration_seconds
+
+            # Check if annotation overlaps with this video
+            if annotation.game_timestamp_start < video_end and annotation.game_timestamp_end > video_start:
+                # Calculate video-specific timestamps
+                video_ts_start = max(0.0, annotation.game_timestamp_start - video_start)
+                video_ts_end = min(video.duration_seconds, annotation.game_timestamp_end - video_start)
+
+                link = AnnotationVideo(
+                    annotation_id=annotation.id,
+                    video_id=video.id,
+                    video_timestamp_start=video_ts_start,
+                    video_timestamp_end=video_ts_end,
+                )
+                session.add(link)
 
 
 async def create_games() -> list[Game]:
@@ -148,68 +197,17 @@ async def create_game_rosters(games: list[Game], players: list[Player]) -> None:
         # Game 1: Warriors vs Lakers
         warriors_players = [p for p in players if p.team == "Golden State Warriors"]
         lakers_players = [p for p in players if p.team == "Los Angeles Lakers"]
-
-        for player in warriors_players:
-            roster = GameRoster(
-                game_id=games[0].id,
-                player_id=player.id,
-                team_side=TeamSide.HOME,
-            )
-            session.add(roster)
-            roster_count += 1
-
-        for player in lakers_players:
-            roster = GameRoster(
-                game_id=games[0].id,
-                player_id=player.id,
-                team_side=TeamSide.AWAY,
-            )
-            session.add(roster)
-            roster_count += 1
+        roster_count += assign_players_to_game(session, games[0].id, warriors_players, lakers_players)
 
         # Game 2: Celtics vs Nets
         celtics_players = [p for p in players if p.team == "Boston Celtics"]
         nets_players = [p for p in players if p.team == "Brooklyn Nets"]
-
-        for player in celtics_players:
-            roster = GameRoster(
-                game_id=games[1].id,
-                player_id=player.id,
-                team_side=TeamSide.HOME,
-            )
-            session.add(roster)
-            roster_count += 1
-
-        for player in nets_players:
-            roster = GameRoster(
-                game_id=games[1].id,
-                player_id=player.id,
-                team_side=TeamSide.AWAY,
-            )
-            session.add(roster)
-            roster_count += 1
+        roster_count += assign_players_to_game(session, games[1].id, celtics_players, nets_players)
 
         # Game 3: Bucks vs Heat
         bucks_players = [p for p in players if p.team == "Milwaukee Bucks"]
         heat_players = [p for p in players if p.team == "Miami Heat"]
-
-        for player in bucks_players:
-            roster = GameRoster(
-                game_id=games[2].id,
-                player_id=player.id,
-                team_side=TeamSide.HOME,
-            )
-            session.add(roster)
-            roster_count += 1
-
-        for player in heat_players:
-            roster = GameRoster(
-                game_id=games[2].id,
-                player_id=player.id,
-                team_side=TeamSide.AWAY,
-            )
-            session.add(roster)
-            roster_count += 1
+        roster_count += assign_players_to_game(session, games[2].id, bucks_players, heat_players)
 
         await session.commit()
 
@@ -217,14 +215,17 @@ async def create_game_rosters(games: list[Game], players: list[Player]) -> None:
 
 
 async def create_videos(games: list[Game]) -> list[Video]:
-    """Create sample videos for games."""
+    """Create sample videos for games.
+
+    Note: File paths are placeholders for testing purposes - these files don't actually exist.
+    """
     videos = []
     async with async_session_maker() as session:
         # Game 1: Warriors vs Lakers - 3 videos
         videos_game1 = [
             Video(
                 game_id=games[0].id,
-                file_path="/data/videos/warriors_lakers_q1.mp4",
+                file_path="/data/videos/warriors_lakers_q1.mp4",  # Placeholder path for testing
                 duration_seconds=720.0,  # 12 minutes
                 fps=30.0,
                 resolution="1920x1080",
@@ -405,29 +406,7 @@ async def create_annotations(games: list[Game], videos: list[Video]) -> None:
         await session.flush()
 
         # Link annotations to videos
-        for annotation in annotations_game1:
-            # Find which video(s) this annotation spans
-            for video in game1_videos:
-                video_start = video.game_time_offset or 0.0
-                video_end = video_start + video.duration_seconds
-
-                # Check if annotation overlaps with this video
-                if (annotation.game_timestamp_start < video_end and
-                    annotation.game_timestamp_end > video_start):
-                    # Calculate video-specific timestamps
-                    video_ts_start = max(0.0, annotation.game_timestamp_start - video_start)
-                    video_ts_end = min(
-                        video.duration_seconds,
-                        annotation.game_timestamp_end - video_start
-                    )
-
-                    link = AnnotationVideo(
-                        annotation_id=annotation.id,
-                        video_id=video.id,
-                        video_timestamp_start=video_ts_start,
-                        video_timestamp_end=video_ts_end,
-                    )
-                    session.add(link)
+        link_annotations_to_videos(session, annotations_game1, game1_videos)
 
         annotations_count += len(annotations_game1)
 
@@ -478,27 +457,7 @@ async def create_annotations(games: list[Game], videos: list[Video]) -> None:
         await session.flush()
 
         # Link annotations to videos
-        for annotation in annotations_game2:
-            for video in game2_videos:
-                video_start = video.game_time_offset or 0.0
-                video_end = video_start + video.duration_seconds
-
-                if (annotation.game_timestamp_start < video_end and
-                    annotation.game_timestamp_end > video_start):
-                    # Calculate video-specific timestamps
-                    video_ts_start = max(0.0, annotation.game_timestamp_start - video_start)
-                    video_ts_end = min(
-                        video.duration_seconds,
-                        annotation.game_timestamp_end - video_start
-                    )
-
-                    link = AnnotationVideo(
-                        annotation_id=annotation.id,
-                        video_id=video.id,
-                        video_timestamp_start=video_ts_start,
-                        video_timestamp_end=video_ts_end,
-                    )
-                    session.add(link)
+        link_annotations_to_videos(session, annotations_game2, game2_videos)
 
         annotations_count += len(annotations_game2)
 
@@ -540,27 +499,7 @@ async def create_annotations(games: list[Game], videos: list[Video]) -> None:
         await session.flush()
 
         # Link annotations to videos
-        for annotation in annotations_game3:
-            for video in game3_videos:
-                video_start = video.game_time_offset or 0.0
-                video_end = video_start + video.duration_seconds
-
-                if (annotation.game_timestamp_start < video_end and
-                    annotation.game_timestamp_end > video_start):
-                    # Calculate video-specific timestamps
-                    video_ts_start = max(0.0, annotation.game_timestamp_start - video_start)
-                    video_ts_end = min(
-                        video.duration_seconds,
-                        annotation.game_timestamp_end - video_start
-                    )
-
-                    link = AnnotationVideo(
-                        annotation_id=annotation.id,
-                        video_id=video.id,
-                        video_timestamp_start=video_ts_start,
-                        video_timestamp_end=video_ts_end,
-                    )
-                    session.add(link)
+        link_annotations_to_videos(session, annotations_game3, game3_videos)
 
         annotations_count += len(annotations_game3)
 
