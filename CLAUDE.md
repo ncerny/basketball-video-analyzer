@@ -68,46 +68,83 @@ pnpm test -- MyComponent  # Run tests for specific component
 pnpm lint             # Run ESLint
 ```
 
-### Issue Management (Beads MCP Server)
+### Issue Management (Beads)
 
-This project uses Beads issue tracker instead of GitHub Issues. Use the MCP server tools:
+This project uses **Beads issue tracker** instead of GitHub Issues. Run `bd prime` at session start for workflow context.
 
-**View issues:**
-- `mcp__plugin_beads_beads__ready`: Show ready-to-work issues (no blockers)
-- `mcp__plugin_beads_beads__list`: List issues with filters (status, priority, type, assignee)
-- `mcp__plugin_beads_beads__show`: Show detailed issue info with dependencies
-- `mcp__plugin_beads_beads__blocked`: Show all blocked issues
-- `mcp__plugin_beads_beads__stats`: Get project statistics
+**Core Principles:**
+- Track ALL work in beads (no TodoWrite tool, no markdown TODOs)
+- Use `bd create` to create issues, NOT TodoWrite tool
+- Git workflow: hooks auto-sync, run `bd sync` at session end
+- Session management: check `bd ready` for available work
 
-**Manage issues:**
-- `mcp__plugin_beads_beads__create`: Create new issue (feature, bug, task, epic, chore)
-- `mcp__plugin_beads_beads__update`: Update issue status, priority, assignee, description
-- `mcp__plugin_beads_beads__close`: Close completed issue
-- `mcp__plugin_beads_beads__reopen`: Reopen closed issues
-- `mcp__plugin_beads_beads__dep`: Add/manage dependencies between issues
+**Essential Commands:**
 
-**Example usage:**
-```python
-# Get ready tasks
-mcp__plugin_beads_beads__ready(workspace_root="/path/to/project")
-
-# Show issue details
-mcp__plugin_beads_beads__show(issue_id="bbva-a58df2", workspace_root="/path/to/project")
-
-# Update issue status
-mcp__plugin_beads_beads__update(
-    issue_id="bbva-a58df2",
-    status="in_progress",
-    workspace_root="/path/to/project"
-)
-
-# Close issue
-mcp__plugin_beads_beads__close(
-    issue_id="bbva-a58df2",
-    reason="Completed in PR #42",
-    workspace_root="/path/to/project"
-)
+**Finding Work:**
+```bash
+bd ready                     # Show issues ready to work (no blockers)
+bd list --status=open        # All open issues
+bd list --status=in_progress # Your active work
+bd show <id>                 # Detailed issue view with dependencies
+bd blocked                   # Show all blocked issues
 ```
+
+**Creating & Updating:**
+```bash
+bd create --title="..." --type=task|bug|feature|epic|chore
+bd update <id> --status=in_progress     # Claim work
+bd update <id> --assignee=username      # Assign to someone
+bd close <id>                           # Mark complete
+bd close <id1> <id2> ...                # Close multiple (more efficient)
+bd close <id> --reason="explanation"    # Close with reason
+bd reopen <id>                          # Reopen closed issue
+```
+
+**Dependencies & Blocking:**
+```bash
+bd dep add <issue> <depends-on>  # Add dependency (issue depends on depends-on)
+bd show <id>                     # See what's blocking/blocked by this issue
+```
+
+**Sync & Project Health:**
+```bash
+bd sync                # Sync with git remote (run at session end)
+bd sync --status       # Check sync status without syncing
+bd stats               # Project statistics (open/closed/blocked counts)
+```
+
+**Common Workflows:**
+
+Starting work:
+```bash
+bd ready                              # Find available work
+bd show <id>                          # Review issue details
+bd update <id> --status=in_progress   # Claim it
+```
+
+Completing work:
+```bash
+bd close <id1> <id2> ...    # Close all completed issues at once
+bd sync                     # Push beads changes to remote
+```
+
+Creating dependent work:
+```bash
+bd create --title="Implement feature X" --type=feature
+bd create --title="Write tests for X" --type=task
+bd dep add <test-id> <feature-id>  # Tests depend on Feature
+```
+
+**MCP Server Tools (Alternative):**
+
+For use within code/automation, use MCP tools:
+- `mcp__plugin_beads_beads__ready`: Show ready-to-work issues
+- `mcp__plugin_beads_beads__list`: List issues with filters
+- `mcp__plugin_beads_beads__show`: Show detailed issue info
+- `mcp__plugin_beads_beads__create`: Create new issue
+- `mcp__plugin_beads_beads__update`: Update issue status/priority
+- `mcp__plugin_beads_beads__close`: Close completed issue
+- `mcp__plugin_beads_beads__dep`: Add/manage dependencies
 
 **Issue Types**: Epic, Feature, Task, Bug, Chore
 **Issue ID Format**: `bbva-<random>` (e.g., `bbva-a58df2`)
@@ -138,35 +175,70 @@ git commit -m "test(backend): [bbva-a58df2] add unit tests for video processor"
 
 ### Workflow Steps
 
+**🚨 CRITICAL: NEVER push directly to main branch! Always create a feature branch and PR.**
+
 **1. Start Work**
-- Pull latest: Use Bash tool with `git pull origin main`
-- Get ready issues: `mcp__plugin_beads_beads__ready()`
-- Create feature branch: Use Bash tool with `git checkout -b feature/<issue-id>-short-description`
+- Pull latest: `git pull origin main`
+- Get ready issues: `bd ready` or use MCP tool `mcp__plugin_beads_beads__ready()`
+- Show issue details: `bd show <issue-id>`
+- Create feature branch: `git checkout -b feature/<issue-id>-short-description`
+- Claim work: `bd update <issue-id> --status=in_progress`
 
 **2. Make Changes**
 - Write code in small, logical chunks
 - Write tests for new functionality
 - Ensure all tests pass before committing
+- Use `bd sync` periodically to keep beads database in sync
 
 **3. Commit Changes**
-- Use Bash tool for git commits with Conventional Commit format
+- Stage code files: `git add <files>`
+- Sync beads database: `bd sync` (commits beads changes automatically)
+- Commit code with Conventional Commit format:
+  ```bash
+  git commit -m "feat(scope): [bbva-xxx] description"
+  ```
 - Format: `<type>(<scope>): [<issue-id>] <description>`
 - Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`, `perf`
 - Examples:
   - `git commit -m "feat(backend): [bbva-a58df2] add video upload endpoint"`
   - `git commit -m "fix(frontend): [bbva-b72f1a] fix timeline scrubber position"`
 
-**4. Push Changes**
+**4. Push Feature Branch**
 - Use Bash tool: `git push origin feature/<issue-id>-description`
+- **NEVER use `git push origin main`** - this pushes directly to main which is forbidden
 
 **5. Create Pull Request**
-- Use `mcp__github__create_pull_request` tool
-- PR title format: `[<issue-id>] Description`
-- PR body should summarize changes and reference beads issue
+- Use `mcp__github__create_pull_request` tool with:
+  - `head`: feature branch name (e.g., `feature/bbva-xxx-description`)
+  - `base`: `main`
+  - `title`: `[bbva-xxx] Description`
+  - `body`: Summarize changes and reference beads issue
+- Example:
+  ```bash
+  mcp__github__create_pull_request(
+    owner="ncerny",
+    repo="basketball-video-analyzer",
+    title="[bbva-f83] Implement player management UI",
+    head="feature/bbva-f83-player-management",
+    base="main",
+    body="Implements full CRUD player management..."
+  )
+  ```
 
-**6. After Merge**
-- Close issue: `mcp__plugin_beads_beads__close(issue_id="bbva-xyz", reason="Completed in PR #42")`
-- Delete feature branch (GitHub can do this automatically)
+**6. After PR Merge**
+- Close issue: `bd close <issue-id> --reason="Completed in PR #42"`
+- Or use MCP: `mcp__plugin_beads_beads__close(issue_id="bbva-xyz", reason="Completed in PR #42")`
+- Delete feature branch locally: `git branch -d feature/<issue-id>-description`
+- GitHub will automatically delete the remote branch if configured
+
+**7. Session End Checklist**
+
+Before ending any work session, run this checklist:
+```bash
+bd sync                 # Sync beads database with git
+git status              # Verify no uncommitted changes
+git push origin <branch>  # Push feature branch (NOT main!)
+```
 
 ### Semantic Versioning
 
