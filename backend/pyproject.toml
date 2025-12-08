@@ -4,7 +4,10 @@ version = "0.1.0"
 description = "Backend API server for Basketball Video Analyzer"
 authors = ["Basketball Video Analyzer Team"]
 readme = "README.md"
-packages = [{include = "app"}]
+packages = [{include = "app"}, {include = "scripts"}]
+
+[tool.poetry.scripts]
+seed-db = "scripts.seed_data:main"
 
 [tool.poetry.dependencies]
 python = "^3.11"
