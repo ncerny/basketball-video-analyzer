@@ -19,6 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session_maker
 from app.models import (
@@ -33,6 +34,11 @@ from app.models import (
     TeamSide,
     Video,
 )
+
+# Video duration constants (in seconds)
+QUARTER_DURATION_SECONDS = 720.0  # 12 minutes
+HALF_DURATION_SECONDS = 1440.0    # 24 minutes
+FULL_GAME_DURATION_SECONDS = 2880.0  # 48 minutes
 
 
 async def clear_all_data() -> None:
@@ -52,7 +58,7 @@ async def clear_all_data() -> None:
 
 
 def assign_players_to_game(
-    session: any, game_id: int, home_team_players: list[Player], away_team_players: list[Player]
+    session: AsyncSession, game_id: int, home_team_players: list[Player], away_team_players: list[Player]
 ) -> int:
     """Assign players to a game with their team sides."""
     roster_count = 0
@@ -78,7 +84,7 @@ def assign_players_to_game(
     return roster_count
 
 
-def link_annotations_to_videos(session: any, annotations: list[Annotation], videos: list[Video]) -> None:
+def link_annotations_to_videos(session: AsyncSession, annotations: list[Annotation], videos: list[Video]) -> None:
     """Link annotations to their corresponding videos with timestamp calculations."""
     for annotation in annotations:
         for video in videos:
@@ -226,7 +232,7 @@ async def create_videos(games: list[Game]) -> list[Video]:
             Video(
                 game_id=games[0].id,
                 file_path="/data/videos/warriors_lakers_q1.mp4",  # Placeholder path for testing
-                duration_seconds=720.0,  # 12 minutes
+                duration_seconds=QUARTER_DURATION_SECONDS,
                 fps=30.0,
                 resolution="1920x1080",
                 processed=True,
@@ -238,25 +244,25 @@ async def create_videos(games: list[Game]) -> list[Video]:
             Video(
                 game_id=games[0].id,
                 file_path="/data/videos/warriors_lakers_q2.mp4",
-                duration_seconds=720.0,
+                duration_seconds=QUARTER_DURATION_SECONDS,
                 fps=30.0,
                 resolution="1920x1080",
                 processed=True,
                 processing_status=ProcessingStatus.COMPLETED,
                 sequence_order=2,
-                game_time_offset=720.0,
+                game_time_offset=QUARTER_DURATION_SECONDS,
                 recorded_at=datetime.now() - timedelta(days=7, hours=2),
             ),
             Video(
                 game_id=games[0].id,
                 file_path="/data/videos/warriors_lakers_q3.mp4",
-                duration_seconds=720.0,
+                duration_seconds=QUARTER_DURATION_SECONDS,
                 fps=30.0,
                 resolution="1920x1080",
                 processed=True,
                 processing_status=ProcessingStatus.COMPLETED,
                 sequence_order=3,
-                game_time_offset=1440.0,
+                game_time_offset=HALF_DURATION_SECONDS,
                 recorded_at=datetime.now() - timedelta(days=7, hours=1),
             ),
         ]
@@ -267,7 +273,7 @@ async def create_videos(games: list[Game]) -> list[Video]:
             Video(
                 game_id=games[1].id,
                 file_path="/data/videos/celtics_nets_half1.mp4",
-                duration_seconds=1440.0,  # 24 minutes (first half)
+                duration_seconds=HALF_DURATION_SECONDS,
                 fps=30.0,
                 resolution="1920x1080",
                 processed=True,
@@ -279,13 +285,13 @@ async def create_videos(games: list[Game]) -> list[Video]:
             Video(
                 game_id=games[1].id,
                 file_path="/data/videos/celtics_nets_half2.mp4",
-                duration_seconds=1440.0,
+                duration_seconds=HALF_DURATION_SECONDS,
                 fps=30.0,
                 resolution="1920x1080",
                 processed=True,
                 processing_status=ProcessingStatus.COMPLETED,
                 sequence_order=2,
-                game_time_offset=1440.0,
+                game_time_offset=HALF_DURATION_SECONDS,
                 recorded_at=datetime.now() - timedelta(days=3, hours=1),
             ),
         ]
@@ -296,7 +302,7 @@ async def create_videos(games: list[Game]) -> list[Video]:
             Video(
                 game_id=games[2].id,
                 file_path="/data/videos/bucks_heat_full.mp4",
-                duration_seconds=2880.0,  # 48 minutes
+                duration_seconds=FULL_GAME_DURATION_SECONDS,
                 fps=30.0,
                 resolution="1920x1080",
                 processed=True,
