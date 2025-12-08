@@ -143,14 +143,21 @@ export interface CreatePlayDTO {
 
 // Error types
 export class APIError extends Error {
+  status?: number;
+  code?: string;
+  details?: unknown;
+
   constructor(
     message: string,
-    public status?: number,
-    public code?: string,
-    public details?: unknown
+    status?: number,
+    code?: string,
+    details?: unknown
   ) {
     super(message)
     this.name = 'APIError'
+    this.status = status;
+    this.code = code;
+    this.details = details;
   }
 }
 

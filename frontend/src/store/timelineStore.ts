@@ -9,7 +9,7 @@
  */
 
 import { create } from 'zustand';
-import { Video, Annotation, VideoTimeResult } from '../types/timeline';
+import type { Video, Annotation, VideoTimeResult } from '../types/timeline';
 
 interface TimelineState {
   // State
@@ -118,7 +118,7 @@ const findVideoAtGameTime = (gameTime: number, videos: Video[]): Video | null =>
  * @returns Video-specific timestamp in seconds
  */
 const gameTimeToVideoTime = (gameTime: number, video: Video): number => {
-  return gameTime - video.game_time_offset;
+  return gameTime - (video.game_time_offset ?? 0);
 };
 
 /**
@@ -128,7 +128,7 @@ const gameTimeToVideoTime = (gameTime: number, video: Video): number => {
  * @returns Game time in seconds
  */
 const videoTimeToGameTime = (videoTime: number, video: Video): number => {
-  return video.game_time_offset + videoTime;
+  return (video.game_time_offset ?? 0) + videoTime;
 };
 
 /**
@@ -137,7 +137,7 @@ const videoTimeToGameTime = (videoTime: number, video: Video): number => {
  * @returns Sorted array (does not mutate original)
  */
 const sortVideosBySequence = (videos: Video[]): Video[] => {
-  return [...videos].sort((a, b) => a.sequence_order - b.sequence_order);
+  return [...videos].sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0));
 };
 
 /**
