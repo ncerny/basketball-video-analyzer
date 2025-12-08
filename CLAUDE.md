@@ -188,11 +188,11 @@ git commit -m "test(backend): [bbva-a58df2] add unit tests for video processor"
 - Write code in small, logical chunks
 - Write tests for new functionality
 - Ensure all tests pass before committing
-- Use `bd sync` periodically to keep beads database in sync
 
-**3. Commit Changes**
-- Stage code files: `git add <files>`
-- Sync beads database: `bd sync` (commits beads changes automatically)
+**3. Commit Changes (Code Only)**
+- Stage ONLY code files: `git add <code-files>`
+  - ⚠️ **NEVER stage `.beads/` directory** - beads manages this separately
+  - Example: `git add frontend/src/pages/GameDetail.tsx`
 - Commit code with Conventional Commit format:
   ```bash
   git commit -m "feat(scope): [bbva-xxx] description"
@@ -203,11 +203,18 @@ git commit -m "test(backend): [bbva-a58df2] add unit tests for video processor"
   - `git commit -m "feat(backend): [bbva-a58df2] add video upload endpoint"`
   - `git commit -m "fix(frontend): [bbva-b72f1a] fix timeline scrubber position"`
 
-**4. Push Feature Branch**
+**4. Sync Beads Database (Separate from Code)**
+- Run `bd sync` to push beads changes directly to main
+- This happens INDEPENDENTLY of your feature branch
+- Beads changes are NOT included in your PR
+- `bd sync` manages issue status, updates, closures, etc.
+
+**5. Push Feature Branch**
 - Use Bash tool: `git push origin feature/<issue-id>-description`
 - **NEVER use `git push origin main`** - this pushes directly to main which is forbidden
+- Your feature branch should contain ONLY code changes, NOT beads database changes
 
-**5. Create Pull Request**
+**6. Create Pull Request**
 - Use `mcp__github__create_pull_request` tool with:
   - `head`: feature branch name (e.g., `feature/bbva-xxx-description`)
   - `base`: `main`
@@ -225,13 +232,14 @@ git commit -m "test(backend): [bbva-a58df2] add unit tests for video processor"
   )
   ```
 
-**6. After PR Merge**
+**7. After PR Merge**
 - Close issue: `bd close <issue-id> --reason="Completed in PR #42"`
 - Or use MCP: `mcp__plugin_beads_beads__close(issue_id="bbva-xyz", reason="Completed in PR #42")`
+- Run `bd sync` to push the closure to main
 - Delete feature branch locally: `git branch -d feature/<issue-id>-description`
 - GitHub will automatically delete the remote branch if configured
 
-**7. Session End Checklist**
+**8. Session End Checklist**
 
 Before ending any work session, run this checklist:
 ```bash
