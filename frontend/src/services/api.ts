@@ -4,6 +4,7 @@
  * Centralized service for all backend API communication
  */
 
+import { APIError } from '../types/api';
 import type {
   Game,
   CreateGameDTO,
@@ -20,7 +21,6 @@ import type {
   UpdateAnnotationDTO,
   Play,
   CreatePlayDTO,
-  APIError,
   ErrorResponse,
 } from '../types/api';
 
@@ -109,7 +109,7 @@ export const gamesAPI = {
    */
   update: (id: number, data: UpdateGameDTO) =>
     fetchAPI<Game>(`/api/games/${id}`, {
-      method: 'PUT',
+      method: 'PATCH',
       body: JSON.stringify(data),
     }),
 
@@ -150,7 +150,7 @@ export const playersAPI = {
    */
   update: (id: number, data: UpdatePlayerDTO) =>
     fetchAPI<Player>(`/api/players/${id}`, {
-      method: 'PUT',
+      method: 'PATCH',
       body: JSON.stringify(data),
     }),
 
@@ -209,7 +209,7 @@ export const videosAPI = {
    */
   update: (id: number, data: Partial<Video>) =>
     fetchAPI<Video>(`/api/videos/${id}`, {
-      method: 'PUT',
+      method: 'PATCH',
       body: JSON.stringify(data),
     }),
 
@@ -251,7 +251,7 @@ export const gameRostersAPI = {
    */
   update: (id: number, data: Partial<CreateGameRosterDTO>) =>
     fetchAPI<GameRoster>(`/api/game-rosters/${id}`, {
-      method: 'PUT',
+      method: 'PATCH',
       body: JSON.stringify(data),
     }),
 
@@ -293,7 +293,7 @@ export const annotationsAPI = {
    */
   update: (id: number, data: UpdateAnnotationDTO) =>
     fetchAPI<Annotation>(`/api/annotations/${id}`, {
-      method: 'PUT',
+      method: 'PATCH',
       body: JSON.stringify(data),
     }),
 
@@ -343,7 +343,7 @@ export const playsAPI = {
    */
   update: (id: number, data: Partial<CreatePlayDTO>) =>
     fetchAPI<Play>(`/api/plays/${id}`, {
-      method: 'PUT',
+      method: 'PATCH',
       body: JSON.stringify(data),
     }),
 

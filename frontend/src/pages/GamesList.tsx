@@ -10,6 +10,7 @@
 
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Navigation } from '../components/Navigation';
 import { api } from '../services/api';
 import type { Game, CreateGameDTO } from '../types/api';
 
@@ -137,6 +138,7 @@ export const GamesList: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-900 text-white">
+      <Navigation />
       {/* Header */}
       <header className="bg-gray-800 border-b border-gray-700 px-6 py-6">
         <div className="max-w-7xl mx-auto">
