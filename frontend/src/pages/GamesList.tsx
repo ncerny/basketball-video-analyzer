@@ -37,6 +37,18 @@ export const GamesList: React.FC = () => {
     loadGames();
   }, []);
 
+  // Handle Escape key to close modal
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && showCreateForm) {
+        setShowCreateForm(false);
+      }
+    };
+
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [showCreateForm]);
+
   // Load games from API
   const loadGames = async () => {
     setIsLoading(true);
@@ -65,8 +77,12 @@ export const GamesList: React.FC = () => {
 
     try {
       const newGame = await api.games.create(formData);
-      setGames(prev => [newGame, ...prev]);
+      // Re-sort to maintain consistent date ordering
+      setGames(prev => [newGame, ...prev].sort((a, b) =>
+        new Date(b.date).getTime() - new Date(a.date).getTime()
+      ));
       setShowCreateForm(false);
+      setError(null); // Clear any previous errors on success
       // Reset form
       setFormData({
         name: '',
@@ -173,9 +189,22 @@ export const GamesList: React.FC = () => {
 
         {/* Create Game Form */}
         {showCreateForm && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md">
-              <h2 className="text-2xl font-bold mb-4">Create New Game</h2>
+          <div
+            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+            onClick={e => {
+              // Close modal when clicking backdrop (not the content)
+              if (e.target === e.currentTarget) {
+                setShowCreateForm(false);
+              }
+            }}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="create-game-title"
+              className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md"
+            >
+              <h2 id="create-game-title" className="text-2xl font-bold mb-4">Create New Game</h2>
 
               <form onSubmit={handleCreateGame}>
                 <div className="space-y-4">
