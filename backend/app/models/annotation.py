@@ -1,9 +1,10 @@
 """Annotation model."""
 
 import enum
+from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, Enum, Float, ForeignKey, Index
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -52,6 +53,12 @@ class Annotation(Base):
     confidence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     verified: Mapped[bool] = mapped_column(Boolean, default=False)
     created_by: Mapped[CreatedBy] = mapped_column(Enum(CreatedBy))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+    )
 
     # Relationships
     game: Mapped["Game"] = relationship("Game", back_populates="annotations")
