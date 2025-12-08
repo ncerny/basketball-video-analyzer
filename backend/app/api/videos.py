@@ -185,7 +185,8 @@ async def generate_thumbnail(
     video_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
     timestamp: Annotated[
-        float | None, Query(description="Timestamp in seconds to extract frame from (default: middle of video)")
+        float | None,
+        Query(ge=0, description="Timestamp in seconds to extract frame from (default: middle of video)"),
     ] = None,
 ) -> Video:
     """Generate a thumbnail for a video.

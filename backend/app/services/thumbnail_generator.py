@@ -1,6 +1,5 @@
 """Video thumbnail generation service."""
 
-import os
 from pathlib import Path
 
 import ffmpeg
@@ -63,12 +62,16 @@ class ThumbnailGeneratorService:
 
         Raises:
             FileNotFoundError: If video file doesn't exist
-            ValueError: If FFmpeg fails to generate thumbnail
+            ValueError: If FFmpeg fails to generate thumbnail or invalid parameters
         """
         video_path = self.base_path / video_relative_path
 
         if not video_path.exists():
             raise FileNotFoundError(f"Video file not found: {video_path}")
+
+        # Validate timestamp if provided
+        if timestamp is not None and timestamp < 0:
+            raise ValueError(f"Timestamp must be non-negative, got {timestamp}")
 
         # Get thumbnail storage directory
         thumbnail_dir = self._get_thumbnail_storage_path(game_id)
@@ -82,8 +85,10 @@ class ThumbnailGeneratorService:
             if timestamp is None:
                 probe = ffmpeg.probe(str(video_path))
                 duration = float(probe["format"].get("duration", 0))
-                # Extract frame from middle of video
-                timestamp = duration / 2
+                if duration <= 0:
+                    raise ValueError(f"Invalid video duration: {duration}")
+                # Extract frame from middle of video (or min 1 second in)
+                timestamp = max(1.0, duration / 2)
 
             # Extract frame using FFmpeg
             (

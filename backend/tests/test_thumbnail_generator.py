@@ -1,9 +1,9 @@
 """Tests for thumbnail generator service."""
 
-import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import ffmpeg
 import pytest
 
 from app.services.thumbnail_generator import ThumbnailGeneratorService
@@ -169,3 +169,76 @@ def test_generate_thumbnail_video_not_found(thumbnail_service: ThumbnailGenerato
     """Test generating thumbnail for non-existent video raises error."""
     with pytest.raises(FileNotFoundError):
         thumbnail_service.generate_thumbnail("nonexistent/video.mp4", game_id=1)
+
+
+def test_generate_thumbnail_negative_timestamp(
+    thumbnail_service: ThumbnailGeneratorService, tmp_path: Path
+) -> None:
+    """Test generating thumbnail with negative timestamp raises error."""
+    # Create a dummy video file
+    video_dir = tmp_path / "game_1"
+    video_dir.mkdir(parents=True)
+    video_path = video_dir / "test_video.mp4"
+    video_path.touch()
+
+    relative_video_path = str(video_path.relative_to(tmp_path))
+
+    with pytest.raises(ValueError, match="Timestamp must be non-negative"):
+        thumbnail_service.generate_thumbnail(relative_video_path, game_id=1, timestamp=-5.0)
+
+
+@patch("app.services.thumbnail_generator.ffmpeg.probe")
+def test_generate_thumbnail_invalid_duration(
+    mock_probe: MagicMock,
+    thumbnail_service: ThumbnailGeneratorService,
+    tmp_path: Path,
+) -> None:
+    """Test thumbnail generation with zero/invalid duration raises error."""
+    # Create a dummy video file
+    video_dir = tmp_path / "game_1"
+    video_dir.mkdir(parents=True)
+    video_path = video_dir / "test_video.mp4"
+    video_path.touch()
+
+    relative_video_path = str(video_path.relative_to(tmp_path))
+
+    # Mock FFmpeg probe to return zero duration
+    mock_probe_result = {
+        "format": {"duration": "0.0"},
+        "streams": [{"codec_type": "video"}],
+    }
+    mock_probe.return_value = mock_probe_result
+
+    with pytest.raises(ValueError, match="Invalid video duration"):
+        thumbnail_service.generate_thumbnail(relative_video_path, game_id=1, timestamp=None)
+
+
+@patch("app.services.thumbnail_generator.ffmpeg.input")
+def test_generate_thumbnail_ffmpeg_error(
+    mock_input_func: MagicMock,
+    thumbnail_service: ThumbnailGeneratorService,
+    tmp_path: Path,
+) -> None:
+    """Test thumbnail generation handles FFmpeg errors."""
+    # Create a dummy video file
+    video_dir = tmp_path / "game_1"
+    video_dir.mkdir(parents=True)
+    video_path = video_dir / "test_video.mp4"
+    video_path.touch()
+
+    relative_video_path = str(video_path.relative_to(tmp_path))
+
+    # Mock FFmpeg chain to raise an error
+    mock_input = MagicMock()
+    mock_filter = MagicMock()
+    mock_output = MagicMock()
+    mock_overwrite = MagicMock()
+
+    mock_input_func.return_value = mock_input
+    mock_input.filter.return_value = mock_filter
+    mock_filter.output.return_value = mock_output
+    mock_output.overwrite_output.return_value = mock_overwrite
+    mock_overwrite.run.side_effect = ffmpeg.Error("cmd", b"stdout", b"stderr")
+
+    with pytest.raises(ValueError, match="FFmpeg error generating thumbnail"):
+        thumbnail_service.generate_thumbnail(relative_video_path, game_id=1, timestamp=30.0)
