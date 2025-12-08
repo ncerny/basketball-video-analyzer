@@ -10,6 +10,7 @@ class VideoBase(BaseModel):
 
     game_id: int = Field(..., ge=1, description="ID of the game this video belongs to")
     file_path: str = Field(..., min_length=1, max_length=500, description="Path to video file")
+    thumbnail_path: str | None = Field(None, max_length=500, description="Path to thumbnail image")
     duration_seconds: float = Field(..., gt=0, description="Video duration in seconds")
     fps: float = Field(..., gt=0, description="Frames per second")
     resolution: str = Field(..., max_length=50, description="Video resolution (e.g., '1920x1080')")
@@ -25,6 +26,7 @@ class VideoUpdate(BaseModel):
     """Schema for updating a video (all fields optional)."""
 
     file_path: str | None = Field(None, min_length=1, max_length=500)
+    thumbnail_path: str | None = Field(None, max_length=500)
     duration_seconds: float | None = Field(None, gt=0)
     fps: float | None = Field(None, gt=0)
     resolution: str | None = Field(None, max_length=50)
