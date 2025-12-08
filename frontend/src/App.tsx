@@ -4,7 +4,8 @@
  * Sets up routing and app structure
  */
 
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { GamesList } from './pages/GamesList';
 import { VideoAnalysis } from './pages/VideoAnalysis';
 import './App.css';
 
@@ -12,11 +13,11 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
+        {/* Games List Page (Home) */}
+        <Route path="/" element={<GamesList />} />
+
         {/* Video Analysis Page */}
         <Route path="/games/:gameId/analysis" element={<VideoAnalysis />} />
-
-        {/* Default redirect - for now redirect to a test game */}
-        <Route path="/" element={<Navigate to="/games/1/analysis" replace />} />
 
         {/* 404 - Not Found */}
         <Route
