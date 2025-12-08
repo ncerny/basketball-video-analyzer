@@ -3,12 +3,14 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.video import ProcessingStatus, Video as VideoModel
 from app.schemas.video import Video, VideoCreate, VideoList, VideoUpdate
+from app.services.thumbnail_generator import ThumbnailGeneratorService
 
 router = APIRouter(prefix="/videos", tags=["videos"])
 
@@ -176,3 +178,96 @@ async def delete_video(
 
     await db.delete(video)
     await db.commit()
+
+
+@router.post("/{video_id}/thumbnail", response_model=Video)
+async def generate_thumbnail(
+    video_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    timestamp: Annotated[
+        float | None, Query(description="Timestamp in seconds to extract frame from (default: middle of video)")
+    ] = None,
+) -> Video:
+    """Generate a thumbnail for a video.
+
+    Extracts a frame from the video at the specified timestamp (or middle if not specified)
+    and saves it as a JPEG thumbnail. Updates the video record with the thumbnail path.
+    """
+    # Get video
+    stmt = select(VideoModel).where(VideoModel.id == video_id)
+    result = await db.execute(stmt)
+    video = result.scalar_one_or_none()
+
+    if not video:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Video with id {video_id} not found",
+        )
+
+    # Generate thumbnail
+    thumbnail_service = ThumbnailGeneratorService()
+    try:
+        thumbnail_path = thumbnail_service.generate_thumbnail(
+            video.file_path, video.game_id, timestamp
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate thumbnail: {str(e)}",
+        )
+
+    # Update video record with thumbnail path
+    video.thumbnail_path = thumbnail_path
+    await db.commit()
+    await db.refresh(video)
+
+    return Video.model_validate(video)
+
+
+@router.get("/{video_id}/thumbnail")
+async def get_thumbnail(
+    video_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> FileResponse:
+    """Get the thumbnail image for a video.
+
+    Returns the thumbnail image file if it exists. If no thumbnail exists,
+    returns a 404 error. Use POST /videos/{video_id}/thumbnail to generate one first.
+    """
+    # Get video
+    stmt = select(VideoModel).where(VideoModel.id == video_id)
+    result = await db.execute(stmt)
+    video = result.scalar_one_or_none()
+
+    if not video:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Video with id {video_id} not found",
+        )
+
+    if not video.thumbnail_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No thumbnail exists for video {video_id}. Use POST /videos/{video_id}/thumbnail to generate one.",
+        )
+
+    # Get absolute path to thumbnail
+    thumbnail_service = ThumbnailGeneratorService()
+    thumbnail_absolute_path = thumbnail_service.get_absolute_path(video.thumbnail_path)
+
+    if not thumbnail_service.thumbnail_exists(video.thumbnail_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Thumbnail file not found at {video.thumbnail_path}",
+        )
+
+    return FileResponse(
+        path=str(thumbnail_absolute_path),
+        media_type="image/jpeg",
+        filename=f"video_{video_id}_thumbnail.jpg",
+    )
