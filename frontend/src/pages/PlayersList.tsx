@@ -5,6 +5,34 @@
  */
 
 import { useState, useEffect } from 'react';
+import {
+  Container,
+  Title,
+  Text,
+  Button,
+  Group,
+  Stack,
+  TextInput,
+  Select,
+  Table,
+  Modal,
+  Alert,
+  Center,
+  Loader,
+  Textarea,
+  NumberInput,
+  ActionIcon,
+  Badge,
+  Paper,
+} from '@mantine/core';
+import {
+  IconPlus,
+  IconSearch,
+  IconEdit,
+  IconTrash,
+  IconAlertCircle,
+  IconUsers,
+} from '@tabler/icons-react';
 import { Navigation } from '../components/Navigation';
 import { api } from '../services/api';
 import type { Player, CreatePlayerDTO } from '../types/api';
@@ -153,233 +181,224 @@ export function PlayersList() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
-        <div className="text-xl">Loading players...</div>
-      </div>
+      <Center h="100vh">
+        <Stack align="center" gap="md">
+          <Loader size="xl" />
+          <Text size="xl" fw={600}>Loading players...</Text>
+          <Text c="dimmed">Please wait</Text>
+        </Stack>
+      </Center>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white">
+    <div>
       <Navigation />
-      <div className="p-8">
-        {/* Header */}
-        <div className="max-w-7xl mx-auto">
-        <div className="flex justify-between items-center mb-8">
-          <h1 className="text-4xl font-bold">Players</h1>
-          <button
-            onClick={() => setShowCreateForm(true)}
-            className="bg-blue-600 hover:bg-blue-700 px-6 py-3 rounded-lg font-semibold transition-colors"
-          >
-            + Add Player
-          </button>
-        </div>
 
-        {/* Search and filters */}
-        <div className="mb-6 flex gap-4">
-          <input
-            type="text"
+      {/* Header */}
+      <Container size="xl" mb="xl">
+        <Group justify="space-between" align="flex-start">
+          <div>
+            <Title order={1} size="h1">Players</Title>
+            <Text c="dimmed" size="lg" mt="xs">Manage your player database</Text>
+          </div>
+          <Button
+            leftSection={<IconPlus size={18} />}
+            size="md"
+            onClick={() => setShowCreateForm(true)}
+          >
+            Add Player
+          </Button>
+        </Group>
+      </Container>
+
+      {/* Main Content */}
+      <Container size="xl">
+        {/* Error Message */}
+        {error && (
+          <Alert
+            icon={<IconAlertCircle size={18} />}
+            title="Error"
+            color="red"
+            withCloseButton
+            onClose={() => setError(null)}
+            mb="xl"
+          >
+            {error}
+          </Alert>
+        )}
+
+        {/* Search and Filters */}
+        <Group mb="lg" grow>
+          <TextInput
             placeholder="Search players..."
+            leftSection={<IconSearch size={18} />}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="flex-1 px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
-          <select
+          <Select
+            placeholder="All Teams"
+            leftSection={<IconUsers size={18} />}
+            data={[
+              { value: '', label: 'All Teams' },
+              ...teams.map(team => ({ value: team, label: team }))
+            ]}
             value={teamFilter}
-            onChange={(e) => setTeamFilter(e.target.value)}
-            className="px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">All Teams</option>
-            {teams.map((team) => (
-              <option key={team} value={team}>
-                {team}
-              </option>
-            ))}
-          </select>
-        </div>
+            onChange={(value) => setTeamFilter(value || '')}
+            clearable
+          />
+        </Group>
 
-        {/* Error display */}
-        {error && (
-          <div className="mb-6 p-4 bg-red-900/50 border border-red-700 rounded-lg text-red-200">
-            {error}
-          </div>
-        )}
-
-        {/* Players count */}
-        <div className="mb-4 text-gray-400">
+        {/* Players Count */}
+        <Text c="dimmed" mb="md">
           Showing {filteredPlayers.length} of {players.length} players
-        </div>
+        </Text>
 
-        {/* Players table */}
+        {/* Players Table */}
         {filteredPlayers.length === 0 ? (
-          <div className="text-center py-12 text-gray-400">
-            {searchTerm || teamFilter
-              ? 'No players match your search criteria'
-              : 'No players yet. Add your first player to get started.'}
-          </div>
+          <Center py="xl">
+            <Stack align="center" gap="md">
+              <IconUsers size={48} stroke={1.5} color="var(--mantine-color-dimmed)" />
+              <Title order={3} c="dimmed">
+                {searchTerm || teamFilter
+                  ? 'No players match your search criteria'
+                  : 'No players yet'}
+              </Title>
+              {!searchTerm && !teamFilter && (
+                <>
+                  <Text c="dimmed">Add your first player to get started</Text>
+                  <Button onClick={() => setShowCreateForm(true)}>
+                    Add Player
+                  </Button>
+                </>
+              )}
+            </Stack>
+          </Center>
         ) : (
-          <div className="bg-gray-800 rounded-lg overflow-hidden">
-            <table className="w-full">
-              <thead className="bg-gray-700">
-                <tr>
-                  <th className="px-6 py-3 text-left text-sm font-semibold">Name</th>
-                  <th className="px-6 py-3 text-left text-sm font-semibold">Jersey #</th>
-                  <th className="px-6 py-3 text-left text-sm font-semibold">Team</th>
-                  <th className="px-6 py-3 text-left text-sm font-semibold">Notes</th>
-                  <th className="px-6 py-3 text-right text-sm font-semibold">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-700">
-                {filteredPlayers.map((player) => (
-                  <tr key={player.id} className="hover:bg-gray-700/50 transition-colors">
-                    <td className="px-6 py-4 font-medium">{player.name}</td>
-                    <td className="px-6 py-4">#{player.jersey_number}</td>
-                    <td className="px-6 py-4">{player.team}</td>
-                    <td className="px-6 py-4 text-gray-400 max-w-md truncate">
-                      {player.notes || '-'}
-                    </td>
-                    <td className="px-6 py-4 text-right space-x-2">
-                      <button
-                        onClick={() => openEditModal(player)}
-                        className="px-3 py-1 bg-gray-600 hover:bg-gray-500 rounded transition-colors"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        onClick={() => handleDeletePlayer(player.id, player.name)}
-                        className="px-3 py-1 bg-red-600 hover:bg-red-700 rounded transition-colors"
-                      >
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <Paper shadow="sm" withBorder>
+            <Table.ScrollContainer minWidth={500}>
+              <Table highlightOnHover>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Name</Table.Th>
+                    <Table.Th>Jersey #</Table.Th>
+                    <Table.Th>Team</Table.Th>
+                    <Table.Th>Notes</Table.Th>
+                    <Table.Th style={{ textAlign: 'right' }}>Actions</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {filteredPlayers.map((player) => (
+                    <Table.Tr key={player.id}>
+                      <Table.Td fw={500}>{player.name}</Table.Td>
+                      <Table.Td>
+                        <Badge variant="light" size="lg">#{player.jersey_number}</Badge>
+                      </Table.Td>
+                      <Table.Td>{player.team}</Table.Td>
+                      <Table.Td c="dimmed" maw={300} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {player.notes || '-'}
+                      </Table.Td>
+                      <Table.Td>
+                        <Group gap="xs" justify="flex-end">
+                          <ActionIcon
+                            variant="light"
+                            color="blue"
+                            onClick={() => openEditModal(player)}
+                            title="Edit player"
+                          >
+                            <IconEdit size={18} />
+                          </ActionIcon>
+                          <ActionIcon
+                            variant="light"
+                            color="red"
+                            onClick={() => handleDeletePlayer(player.id, player.name)}
+                            title="Delete player"
+                          >
+                            <IconTrash size={18} />
+                          </ActionIcon>
+                        </Group>
+                      </Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </Table.ScrollContainer>
+          </Paper>
         )}
-      </div>
 
-      {/* Create/Edit Modal */}
-      {(showCreateForm || editingPlayer) && (
-        <div
-          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) {
-              closeModal();
-            }
-          }}
+        {/* Create/Edit Modal */}
+        <Modal
+          opened={showCreateForm || editingPlayer !== null}
+          onClose={closeModal}
+          title={editingPlayer ? 'Edit Player' : 'Add New Player'}
+          size="md"
         >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="player-form-title"
-            className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md"
-          >
-            <h2 id="player-form-title" className="text-2xl font-bold mb-4">
-              {editingPlayer ? 'Edit Player' : 'Add New Player'}
-            </h2>
+          <form onSubmit={editingPlayer ? handleEditPlayer : handleCreatePlayer}>
+            <Stack gap="md">
+              {/* Player Name */}
+              <TextInput
+                label="Player Name"
+                placeholder="John Doe"
+                required
+                value={formData.name}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              />
 
-            <form onSubmit={editingPlayer ? handleEditPlayer : handleCreatePlayer}>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium mb-1" htmlFor="player-name">
-                    Player Name *
-                  </label>
-                  <input
-                    id="player-name"
-                    type="text"
-                    required
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="John Doe"
-                  />
-                </div>
+              {/* Jersey Number */}
+              <NumberInput
+                label="Jersey Number"
+                placeholder="23"
+                required
+                min={0}
+                max={99}
+                value={formData.jersey_number}
+                onChange={(value) => setFormData({ ...formData, jersey_number: Number(value) || 0 })}
+              />
 
-                <div>
-                  <label className="block text-sm font-medium mb-1" htmlFor="jersey-number">
-                    Jersey Number *
-                  </label>
-                  <input
-                    id="jersey-number"
-                    type="number"
-                    required
-                    min="0"
-                    max="99"
-                    value={formData.jersey_number}
-                    onChange={(e) =>
-                      setFormData({ ...formData, jersey_number: parseInt(e.target.value) || 0 })
-                    }
-                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="23"
-                  />
-                </div>
+              {/* Team */}
+              <TextInput
+                label="Team"
+                placeholder="Warriors"
+                required
+                value={formData.team}
+                onChange={(e) => setFormData({ ...formData, team: e.target.value })}
+                list="team-suggestions"
+              />
+              <datalist id="team-suggestions">
+                {teams.map((team) => (
+                  <option key={team} value={team} />
+                ))}
+              </datalist>
 
-                <div>
-                  <label className="block text-sm font-medium mb-1" htmlFor="team">
-                    Team *
-                  </label>
-                  <input
-                    id="team"
-                    type="text"
-                    required
-                    value={formData.team}
-                    onChange={(e) => setFormData({ ...formData, team: e.target.value })}
-                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="Warriors"
-                    list="team-suggestions"
-                  />
-                  <datalist id="team-suggestions">
-                    {teams.map((team) => (
-                      <option key={team} value={team} />
-                    ))}
-                  </datalist>
-                </div>
+              {/* Notes */}
+              <Textarea
+                label="Notes"
+                placeholder="Optional notes about the player"
+                rows={3}
+                value={formData.notes}
+                onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+              />
 
-                <div>
-                  <label className="block text-sm font-medium mb-1" htmlFor="notes">
-                    Notes
-                  </label>
-                  <textarea
-                    id="notes"
-                    value={formData.notes}
-                    onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="Optional notes about the player"
-                    rows={3}
-                  />
-                </div>
-              </div>
-
-              <div className="mt-6 flex justify-end space-x-3">
-                <button
-                  type="button"
+              {/* Form Actions */}
+              <Group justify="flex-end" mt="md">
+                <Button
+                  variant="subtle"
                   onClick={closeModal}
-                  className="px-4 py-2 bg-gray-600 hover:bg-gray-500 rounded transition-colors"
                   disabled={isCreating}
                 >
                   Cancel
-                </button>
-                <button
+                </Button>
+                <Button
                   type="submit"
-                  disabled={isCreating}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  loading={isCreating}
                 >
-                  {isCreating
-                    ? editingPlayer
-                      ? 'Updating...'
-                      : 'Creating...'
-                    : editingPlayer
-                    ? 'Update Player'
-                    : 'Create Player'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-      </div>
+                  {editingPlayer ? 'Update Player' : 'Create Player'}
+                </Button>
+              </Group>
+            </Stack>
+          </form>
+        </Modal>
+      </Container>
     </div>
   );
 }
