@@ -1,10 +1,12 @@
 /**
  * Navigation Component
  *
- * Simple navigation bar for top-level pages
+ * Navigation bar using Mantine components
  */
 
+import { Group, Button, Box, Container } from '@mantine/core';
 import { Link, useLocation } from 'react-router-dom';
+import { IconVideo, IconUsers } from '@tabler/icons-react';
 
 export function Navigation() {
   const location = useLocation();
@@ -14,31 +16,27 @@ export function Navigation() {
   };
 
   return (
-    <nav className="bg-gray-800 border-b border-gray-700 mb-8">
-      <div className="max-w-7xl mx-auto px-8">
-        <div className="flex space-x-8 py-4">
-          <Link
+    <Box component="nav" mb="xl" style={{ borderBottom: '1px solid var(--mantine-color-dark-4)' }}>
+      <Container size="xl" py="md">
+        <Group gap="md">
+          <Button
+            component={Link}
             to="/"
-            className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-              isActive('/')
-                ? 'bg-gray-900 text-white'
-                : 'text-gray-300 hover:bg-gray-700 hover:text-white'
-            }`}
+            variant={isActive('/') ? 'filled' : 'subtle'}
+            leftSection={<IconVideo size={18} />}
           >
             Games
-          </Link>
-          <Link
+          </Button>
+          <Button
+            component={Link}
             to="/players"
-            className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-              isActive('/players')
-                ? 'bg-gray-900 text-white'
-                : 'text-gray-300 hover:bg-gray-700 hover:text-white'
-            }`}
+            variant={isActive('/players') ? 'filled' : 'subtle'}
+            leftSection={<IconUsers size={18} />}
           >
             Players
-          </Link>
-        </div>
-      </div>
-    </nav>
+          </Button>
+        </Group>
+      </Container>
+    </Box>
   );
 }
