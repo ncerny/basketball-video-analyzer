@@ -6,6 +6,7 @@
 
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { GamesList } from './pages/GamesList';
+import { GameDetail } from './pages/GameDetail';
 import { PlayersList } from './pages/PlayersList';
 import { VideoAnalysis } from './pages/VideoAnalysis';
 import './App.css';
@@ -16,6 +17,9 @@ function App() {
       <Routes>
         {/* Games List Page (Home) */}
         <Route path="/" element={<GamesList />} />
+
+        {/* Game Detail Page */}
+        <Route path="/games/:gameId" element={<GameDetail />} />
 
         {/* Players List Page */}
         <Route path="/players" element={<PlayersList />} />

@@ -391,6 +391,12 @@ export const GamesList: React.FC = () => {
                   {/* Actions */}
                   <div className="flex gap-2">
                     <button
+                      onClick={() => navigate(`/games/${game.id}`)}
+                      className="flex-1 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg font-medium transition"
+                    >
+                      View Details
+                    </button>
+                    <button
                       onClick={() => navigate(`/games/${game.id}/analysis`)}
                       className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition"
                     >
