@@ -178,7 +178,8 @@ git commit -m "test(backend): [bbva-a58df2] add unit tests for video processor"
 **🚨 CRITICAL: NEVER push directly to main branch! Always create a feature branch and PR.**
 
 **1. Start Work**
-- Pull latest: `git pull origin main`
+- Pull latest code: `git pull origin main`
+- Sync latest beads state: `bd sync --from-main`
 - Get ready issues: `bd ready` or use MCP tool `mcp__plugin_beads_beads__ready()`
 - Show issue details: `bd show <issue-id>`
 - Create feature branch: `git checkout -b feature/<issue-id>-short-description`
@@ -188,15 +189,18 @@ git commit -m "test(backend): [bbva-a58df2] add unit tests for video processor"
 - Write code in small, logical chunks
 - Write tests for new functionality
 - Ensure all tests pass before committing
-- Use `bd sync` periodically to keep beads database in sync
 
 **3. Commit Changes**
-- Stage code files: `git add <files>`
-- Sync beads database: `bd sync` (commits beads changes automatically)
-- Commit code with Conventional Commit format:
+- Stage your code files: `git add <files>`
+- Commit with Conventional Commit format:
   ```bash
   git commit -m "feat(scope): [bbva-xxx] description"
   ```
+- **How Beads Works with Commits:**
+  - A pre-commit hook automatically stages `.beads/issues.jsonl`
+  - You don't need to manually add or avoid `.beads/` directory
+  - Beads changes are ALWAYS included in your commits (by design)
+  - This keeps issue state synchronized with code changes
 - Format: `<type>(<scope>): [<issue-id>] <description>`
 - Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`, `perf`
 - Examples:
@@ -206,6 +210,7 @@ git commit -m "test(backend): [bbva-a58df2] add unit tests for video processor"
 **4. Push Feature Branch**
 - Use Bash tool: `git push origin feature/<issue-id>-description`
 - **NEVER use `git push origin main`** - this pushes directly to main which is forbidden
+- Your PR will include both code changes AND beads changes (this is expected)
 
 **5. Create Pull Request**
 - Use `mcp__github__create_pull_request` tool with:
@@ -226,6 +231,7 @@ git commit -m "test(backend): [bbva-a58df2] add unit tests for video processor"
   ```
 
 **6. After PR Merge**
+- Pull the merged changes: `git checkout main && git pull origin main`
 - Close issue: `bd close <issue-id> --reason="Completed in PR #42"`
 - Or use MCP: `mcp__plugin_beads_beads__close(issue_id="bbva-xyz", reason="Completed in PR #42")`
 - Delete feature branch locally: `git branch -d feature/<issue-id>-description`
@@ -235,10 +241,15 @@ git commit -m "test(backend): [bbva-a58df2] add unit tests for video processor"
 
 Before ending any work session, run this checklist:
 ```bash
-bd sync                 # Sync beads database with git
-git status              # Verify no uncommitted changes
+git status              # Verify all changes are committed
 git push origin <branch>  # Push feature branch (NOT main!)
 ```
+
+**Note on Beads Sync:**
+- The `bd sync` command is designed for local-merge workflows
+- When using PR-based workflow, beads changes are automatically included via pre-commit hook
+- No manual `bd sync` needed during normal PR workflow
+- Use `bd sync --from-main` when starting work to pull latest beads state from main
 
 ### Semantic Versioning
 
