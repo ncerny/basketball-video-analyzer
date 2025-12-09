@@ -10,6 +10,27 @@
 
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
+import {
+  AppShell,
+  Title,
+  Text,
+  Button,
+  Group,
+  Stack,
+  Center,
+  Loader,
+  Paper,
+  Badge,
+  Box,
+} from '@mantine/core';
+import {
+  IconArrowLeft,
+  IconEye,
+  IconEyeOff,
+  IconCalendar,
+  IconMapPin,
+  IconVideo,
+} from '@tabler/icons-react';
 import { useTimelineStore } from '../store/timelineStore';
 import { GameTimelinePlayer } from '../components/GameTimelinePlayer';
 import { AnnotationPanel } from '../components/AnnotationPanel';
@@ -86,169 +107,232 @@ export const VideoAnalysis: React.FC = () => {
     });
   };
 
+  // Format duration
+  const formatDuration = (seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
-        <div className="text-center">
-          <div className="text-xl font-semibold mb-2">Loading game...</div>
-          <div className="text-gray-400">Please wait</div>
-        </div>
-      </div>
+      <Center h="100vh">
+        <Stack align="center" gap="md">
+          <Loader size="xl" />
+          <Text size="xl" fw={600}>Loading game...</Text>
+          <Text c="dimmed">Please wait</Text>
+        </Stack>
+      </Center>
     );
   }
 
   if (error || !game) {
     return (
-      <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
-        <div className="text-center">
-          <div className="text-xl font-semibold mb-2 text-red-400">Error</div>
-          <div className="text-gray-400">{error || 'Game not found'}</div>
-          <button
+      <Center h="100vh">
+        <Stack align="center" gap="md">
+          <Title order={2} c="red">Error</Title>
+          <Text c="dimmed">{error || 'Game not found'}</Text>
+          <Button
+            leftSection={<IconArrowLeft size={18} />}
             onClick={() => window.history.back()}
-            className="mt-4 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition"
           >
             Go Back
-          </button>
-        </div>
-      </div>
+          </Button>
+        </Stack>
+      </Center>
     );
   }
 
   if (videos.length === 0) {
     return (
-      <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
-        <div className="text-center">
-          <div className="text-xl font-semibold mb-2">No Videos</div>
-          <div className="text-gray-400">
-            No videos have been uploaded for this game yet
-          </div>
-          <button
+      <Center h="100vh">
+        <Stack align="center" gap="md">
+          <IconVideo size={48} stroke={1.5} color="var(--mantine-color-dimmed)" />
+          <Title order={2}>No Videos</Title>
+          <Text c="dimmed">No videos have been uploaded for this game yet</Text>
+          <Button
+            leftSection={<IconArrowLeft size={18} />}
             onClick={() => window.history.back()}
-            className="mt-4 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition"
           >
             Go Back
-          </button>
-        </div>
-      </div>
+          </Button>
+        </Stack>
+      </Center>
     );
   }
 
   return (
-    <div className="flex flex-col h-screen bg-gray-900 text-white">
-      {/* Header */}
-      <header className="bg-gray-800 border-b border-gray-700 px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold">{game.name}</h1>
-            <div className="mt-1 flex items-center gap-4 text-sm text-gray-400">
-              <span>{formatDate(game.date)}</span>
-              <span>•</span>
-              <span>
-                {game.home_team} vs {game.away_team}
-              </span>
-              {game.location && (
-                <>
-                  <span>•</span>
-                  <span>{game.location}</span>
-                </>
-              )}
+    <AppShell
+      header={{ height: currentVideo ? 160 : 120 }}
+      padding={0}
+      styles={{
+        main: {
+          height: '100vh',
+          display: 'flex',
+          flexDirection: 'column',
+        },
+      }}
+    >
+      <AppShell.Header
+        style={{
+          borderBottom: '1px solid var(--mantine-color-dark-4)',
+        }}
+      >
+        <Box p="md">
+          {/* Header */}
+          <Group justify="space-between" mb="sm">
+            <div>
+              <Title order={2}>{game.name}</Title>
+              <Group gap="xs" mt={4}>
+                <Group gap={4}>
+                  <IconCalendar size={16} />
+                  <Text size="sm" c="dimmed">{formatDate(game.date)}</Text>
+                </Group>
+                <Text c="dimmed" size="sm">•</Text>
+                <Text size="sm" c="dimmed">
+                  {game.home_team} vs {game.away_team}
+                </Text>
+                {game.location && (
+                  <>
+                    <Text c="dimmed" size="sm">•</Text>
+                    <Group gap={4}>
+                      <IconMapPin size={16} />
+                      <Text size="sm" c="dimmed">{game.location}</Text>
+                    </Group>
+                  </>
+                )}
+              </Group>
             </div>
-          </div>
 
-          {/* Controls */}
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setShowAnnotations(!showAnnotations)}
-              className={`px-4 py-2 rounded-lg font-medium transition ${
-                showAnnotations
-                  ? 'bg-blue-600 hover:bg-blue-700'
-                  : 'bg-gray-700 hover:bg-gray-600'
-              }`}
-            >
-              {showAnnotations ? 'Hide' : 'Show'} Annotations
-            </button>
-            <button
-              onClick={() => window.history.back()}
-              className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition"
-            >
-              Back
-            </button>
-          </div>
-        </div>
+            {/* Controls */}
+            <Group gap="xs">
+              <Button
+                variant={showAnnotations ? 'filled' : 'light'}
+                leftSection={showAnnotations ? <IconEyeOff size={18} /> : <IconEye size={18} />}
+                onClick={() => setShowAnnotations(!showAnnotations)}
+              >
+                {showAnnotations ? 'Hide' : 'Show'} Annotations
+              </Button>
+              <Button
+                variant="subtle"
+                leftSection={<IconArrowLeft size={18} />}
+                onClick={() => window.history.back()}
+              >
+                Back
+              </Button>
+            </Group>
+          </Group>
 
-        {/* Video Info */}
-        {currentVideo && (
-          <div className="mt-3 p-3 bg-gray-900 rounded-lg text-sm">
-            <div className="flex items-center gap-4">
-              <span className="text-gray-400">Current Video:</span>
-              <span className="font-medium">
-                Video {videos.findIndex(v => v.id === currentVideo.id) + 1} of{' '}
-                {videos.length}
-              </span>
-              <span className="text-gray-400">•</span>
-              <span className="text-gray-400">
-                {currentVideo.resolution} @ {currentVideo.fps} FPS
-              </span>
-              <span className="text-gray-400">•</span>
-              <span className="text-gray-400">
-                {Math.floor(currentVideo.duration_seconds / 60)}:
-                {String(Math.floor(currentVideo.duration_seconds % 60)).padStart(2, '0')}
-              </span>
-            </div>
-          </div>
-        )}
-      </header>
+          {/* Current Video Info */}
+          {currentVideo && (
+            <Paper p="xs" withBorder>
+              <Group gap="md">
+                <Group gap={4}>
+                  <Text size="sm" c="dimmed">Current Video:</Text>
+                  <Badge>
+                    Video {videos.findIndex(v => v.id === currentVideo.id) + 1} of{' '}
+                    {videos.length}
+                  </Badge>
+                </Group>
+                <Text c="dimmed" size="sm">•</Text>
+                <Text size="sm" c="dimmed">
+                  {currentVideo.resolution} @ {currentVideo.fps} FPS
+                </Text>
+                <Text c="dimmed" size="sm">•</Text>
+                <Text size="sm" c="dimmed">
+                  {formatDuration(currentVideo.duration_seconds)}
+                </Text>
+              </Group>
+            </Paper>
+          )}
+        </Box>
+      </AppShell.Header>
 
-      {/* Main Content */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left: Video Player (flexible) */}
-        <div className="flex-1 flex flex-col overflow-hidden">
-          <GameTimelinePlayer
-            onVideoChange={setCurrentVideo}
-            showAnnotations={showAnnotations}
-            showAdvancedControls={true}
-            className="h-full"
-          />
-        </div>
-
-        {/* Right: Annotation Panel (resizable) */}
-        {showAnnotations && (
-          <div
-            className="border-l border-gray-700 flex-shrink-0 overflow-hidden"
-            style={{ width: `${annotationPanelWidth}px` }}
+      <AppShell.Main style={{ paddingTop: currentVideo ? '160px' : '120px' }}>
+        {/* Main Content */}
+        <Box
+          style={{
+            display: 'flex',
+            height: '100%',
+            overflow: 'hidden',
+          }}
+        >
+          {/* Left: Video Player (flexible) */}
+          <Box
+            style={{
+              flex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
           >
-            <div className="h-full overflow-y-auto">
-              <AnnotationPanel gameId={gameIdNum} />
-            </div>
-
-            {/* Resize Handle */}
-            <div
-              className="absolute top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 transition-colors"
-              style={{ left: `-1px` }}
-              onMouseDown={e => {
-                e.preventDefault();
-                const startX = e.clientX;
-                const startWidth = annotationPanelWidth;
-
-                const handleMouseMove = (e: MouseEvent) => {
-                  const diff = startX - e.clientX;
-                  const newWidth = Math.max(300, Math.min(800, startWidth + diff));
-                  setAnnotationPanelWidth(newWidth);
-                };
-
-                const handleMouseUp = () => {
-                  document.removeEventListener('mousemove', handleMouseMove);
-                  document.removeEventListener('mouseup', handleMouseUp);
-                };
-
-                document.addEventListener('mousemove', handleMouseMove);
-                document.addEventListener('mouseup', handleMouseUp);
-              }}
+            <GameTimelinePlayer
+              onVideoChange={setCurrentVideo}
+              showAnnotations={showAnnotations}
+              showAdvancedControls={true}
+              className="h-full"
             />
-          </div>
-        )}
-      </div>
-    </div>
+          </Box>
+
+          {/* Right: Annotation Panel (resizable) */}
+          {showAnnotations && (
+            <Box
+              style={{
+                width: `${annotationPanelWidth}px`,
+                borderLeft: '1px solid var(--mantine-color-dark-4)',
+                flexShrink: 0,
+                overflow: 'hidden',
+                position: 'relative',
+              }}
+            >
+              <Box
+                style={{
+                  height: '100%',
+                  overflowY: 'auto',
+                }}
+              >
+                <AnnotationPanel gameId={gameIdNum} />
+              </Box>
+
+              {/* Resize Handle */}
+              <Box
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  bottom: 0,
+                  left: -1,
+                  width: 4,
+                  cursor: 'col-resize',
+                  transition: 'background-color 200ms',
+                  ':hover': {
+                    backgroundColor: 'var(--mantine-color-blue-6)',
+                  },
+                }}
+                onMouseDown={e => {
+                  e.preventDefault();
+                  const startX = e.clientX;
+                  const startWidth = annotationPanelWidth;
+
+                  const handleMouseMove = (e: MouseEvent) => {
+                    const diff = startX - e.clientX;
+                    const newWidth = Math.max(300, Math.min(800, startWidth + diff));
+                    setAnnotationPanelWidth(newWidth);
+                  };
+
+                  const handleMouseUp = () => {
+                    document.removeEventListener('mousemove', handleMouseMove);
+                    document.removeEventListener('mouseup', handleMouseUp);
+                  };
+
+                  document.addEventListener('mousemove', handleMouseMove);
+                  document.addEventListener('mouseup', handleMouseUp);
+                }}
+              />
+            </Box>
+          )}
+        </Box>
+      </AppShell.Main>
+    </AppShell>
   );
 };
 
