@@ -11,8 +11,9 @@
  */
 
 import { useState } from 'react';
-import { useTimelineStore, useVideoSegments, useVideoGaps } from '../store/timelineStore';
+import { useTimelineStore } from '../store/timelineStore';
 import { MultiVideoPlayer } from './MultiVideoPlayer';
+import { TimelineBar } from './TimelineBar';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import type { Video } from '../types/timeline';
 
@@ -51,10 +52,6 @@ export const GameTimelinePlayer: React.FC<GameTimelinePlayerProps> = ({
   const pause = useTimelineStore(state => state.pause);
   const seekToGameTime = useTimelineStore(state => state.seekToGameTime);
   const setPlaybackRate = useTimelineStore(state => state.setPlaybackRate);
-
-  // Video segments and gaps
-  const videoSegments = useVideoSegments();
-  const videoGaps = useVideoGaps();
 
   // UI state
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
@@ -137,113 +134,18 @@ export const GameTimelinePlayer: React.FC<GameTimelinePlayerProps> = ({
 
       {/* Timeline and Controls */}
       <div className="bg-gray-800 p-4 space-y-3">
-        {/* Timeline Scrubber */}
-        <div className="space-y-2">
-          {/* Time Display */}
-          <div className="flex justify-between text-sm text-gray-300 px-1">
-            <span className="font-mono">{formatTime(currentGameTime)}</span>
-            <span className="font-mono text-gray-500">{formatTime(totalDuration)}</span>
-          </div>
-
-          {/* Timeline Track */}
-          <div className="relative">
-            {/* Background track */}
-            <div className="h-12 bg-gray-700 rounded-lg relative overflow-hidden">
-              {/* Video segments */}
-              {videoSegments.map((segment, index) => {
-                const leftPercent = (segment.start / totalDuration) * 100;
-                const widthPercent = ((segment.end - segment.start) / totalDuration) * 100;
-
-                return (
-                  <div
-                    key={segment.videoId}
-                    className="absolute top-0 bottom-0 bg-blue-500 opacity-30"
-                    style={{
-                      left: `${leftPercent}%`,
-                      width: `${widthPercent}%`,
-                    }}
-                    title={`Video ${index + 1}: ${formatTime(segment.start)} - ${formatTime(segment.end)}`}
-                  />
-                );
-              })}
-
-              {/* Gaps */}
-              {videoGaps.map((gap, index) => {
-                const leftPercent = (gap.start / totalDuration) * 100;
-                const widthPercent = ((gap.end - gap.start) / totalDuration) * 100;
-
-                return (
-                  <div
-                    key={`gap-${index}`}
-                    className="absolute top-0 bottom-0 bg-red-500 opacity-20"
-                    style={{
-                      left: `${leftPercent}%`,
-                      width: `${widthPercent}%`,
-                    }}
-                    title={`Gap: ${formatTime(gap.start)} - ${formatTime(gap.end)}`}
-                  />
-                );
-              })}
-
-              {/* Annotation markers */}
-              {showAnnotations && annotations.map((annotation) => {
-                const startPercent = (annotation.game_timestamp_start / totalDuration) * 100;
-                const widthPercent = ((annotation.game_timestamp_end - annotation.game_timestamp_start) / totalDuration) * 100;
-
-                const colorClass = annotation.annotation_type === 'play'
-                  ? 'bg-green-400'
-                  : annotation.annotation_type === 'event'
-                  ? 'bg-yellow-400'
-                  : 'bg-purple-400';
-
-                return (
-                  <div
-                    key={annotation.id}
-                    className={`absolute top-1 h-2 ${colorClass} rounded-full opacity-70 cursor-pointer hover:opacity-100`}
-                    style={{
-                      left: `${startPercent}%`,
-                      width: `${Math.max(widthPercent, 0.5)}%`,
-                    }}
-                    onClick={() => seekToGameTime(annotation.game_timestamp_start)}
-                    title={`${annotation.annotation_type}: ${annotation.verified ? '✓' : '?'}`}
-                  />
-                );
-              })}
-
-              {/* Scrubber input */}
-              <input
-                type="range"
-                min="0"
-                max={totalDuration}
-                step="0.01"
-                value={currentGameTime}
-                onChange={(e) => seekToGameTime(parseFloat(e.target.value))}
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-              />
-
-              {/* Current time indicator */}
-              <div
-                className="absolute top-0 bottom-0 w-1 bg-white shadow-lg"
-                style={{ left: `${(currentGameTime / totalDuration) * 100}%` }}
-              >
-                <div className="absolute -top-2 left-1/2 -translate-x-1/2 w-3 h-3 bg-white rounded-full shadow-lg" />
-              </div>
-            </div>
-
-            {/* Timeline labels */}
-            <div className="flex justify-between mt-1 px-1">
-              <div className="text-xs text-gray-500">
-                {videoSegments.length} video{videoSegments.length !== 1 ? 's' : ''}
-                {videoGaps.length > 0 && `, ${videoGaps.length} gap${videoGaps.length !== 1 ? 's' : ''}`}
-              </div>
-              {showAnnotations && annotations.length > 0 && (
-                <div className="text-xs text-gray-500">
-                  {annotations.length} annotation{annotations.length !== 1 ? 's' : ''}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+        {/* Timeline Visualization */}
+        <TimelineBar
+          currentTime={currentGameTime}
+          totalDuration={totalDuration}
+          onSeek={seekToGameTime}
+          annotations={annotations}
+          showAnnotations={showAnnotations}
+          height={48}
+          showTimeLabels={true}
+          showStats={true}
+          interactive={true}
+        />
 
         {/* Playback Controls */}
         <div className="flex items-center justify-between">
