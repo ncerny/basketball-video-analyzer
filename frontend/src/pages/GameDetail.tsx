@@ -6,6 +6,39 @@
 
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
+import {
+  Container,
+  Title,
+  Text,
+  Button,
+  Group,
+  Stack,
+  Grid,
+  Card,
+  Paper,
+  Modal,
+  Alert,
+  Center,
+  Loader,
+  Badge,
+  FileButton,
+  ActionIcon,
+  Anchor,
+  Radio,
+  Divider,
+} from '@mantine/core';
+import {
+  IconUpload,
+  IconPlus,
+  IconTrash,
+  IconAlertCircle,
+  IconArrowLeft,
+  IconCalendar,
+  IconMapPin,
+  IconUsers,
+  IconVideo,
+  IconClock,
+} from '@tabler/icons-react';
 import { Navigation } from '../components/Navigation';
 import { api } from '../services/api';
 import type { Game, Video, GameRoster, Player } from '../types/api';
@@ -78,10 +111,9 @@ export function GameDetail() {
     fetchGameData();
   }, [gameId, navigate]);
 
-  const handleVideoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files || !e.target.files[0] || !gameId) return;
+  const handleVideoUpload = async (file: File | null) => {
+    if (!file || !gameId) return;
 
-    const file = e.target.files[0];
     setIsUploading(true);
     setError(null);
 
@@ -92,8 +124,6 @@ export function GameDetail() {
       setError(err instanceof Error ? err.message : 'Failed to upload video');
     } finally {
       setIsUploading(false);
-      // Reset file input
-      e.target.value = '';
     }
   };
 
@@ -168,277 +198,344 @@ export function GameDetail() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
-        <div className="text-xl">Loading game...</div>
-      </div>
+      <Center h="100vh">
+        <Stack align="center" gap="md">
+          <Loader size="xl" />
+          <Text size="xl" fw={600}>Loading game...</Text>
+          <Text c="dimmed">Please wait</Text>
+        </Stack>
+      </Center>
     );
   }
 
   if (!game) {
     return (
-      <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
-        <div className="text-center">
-          <h1 className="text-4xl font-bold mb-4">Game Not Found</h1>
-          <Link to="/" className="text-blue-400 hover:text-blue-300">
+      <Center h="100vh">
+        <Stack align="center" gap="md">
+          <Title order={1}>Game Not Found</Title>
+          <Anchor component={Link} to="/" size="lg">
             Return to Games
-          </Link>
-        </div>
-      </div>
+          </Anchor>
+        </Stack>
+      </Center>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white">
+    <div>
       <Navigation />
-      <div className="p-8">
-        <div className="max-w-7xl mx-auto">
-          {/* Header */}
-          <div className="mb-8">
-            <Link to="/" className="text-blue-400 hover:text-blue-300 mb-4 inline-block">
-              ← Back to Games
-            </Link>
-            <h1 className="text-4xl font-bold mb-2">{game.name}</h1>
-            <div className="text-gray-400 space-y-1">
-              <p>{formatDate(game.date)}</p>
-              {game.location && <p>{game.location}</p>}
-              <p className="text-lg">
-                <span className="font-semibold">{game.home_team}</span> vs{' '}
-                <span className="font-semibold">{game.away_team}</span>
-              </p>
-            </div>
-          </div>
 
-          {/* Error display */}
-          {error && (
-            <div className="mb-6 p-4 bg-red-900/50 border border-red-700 rounded-lg text-red-200">
-              {error}
-            </div>
-          )}
+      <Container size="xl">
+        {/* Header */}
+        <Stack gap="md" mb="xl">
+          <Anchor component={Link} to="/" size="sm" c="blue">
+            <Group gap="xs">
+              <IconArrowLeft size={16} />
+              <span>Back to Games</span>
+            </Group>
+          </Anchor>
 
-          {/* Videos Section */}
-          <div className="mb-8">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-2xl font-bold">Videos ({videos.length})</h2>
-              <label className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg font-semibold transition-colors cursor-pointer">
-                {isUploading ? 'Uploading...' : '+ Upload Video'}
-                <input
-                  type="file"
-                  accept="video/*"
-                  onChange={handleVideoUpload}
-                  disabled={isUploading}
-                  className="hidden"
-                />
-              </label>
-            </div>
+          <Title order={1} size="h1">{game.name}</Title>
 
-            {videos.length === 0 ? (
-              <div className="text-center py-12 text-gray-400 bg-gray-800 rounded-lg">
-                No videos uploaded yet. Upload a video to get started.
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {videos.map((video) => (
-                  <div key={video.id} className="bg-gray-800 rounded-lg p-4">
-                    <div className="flex justify-between items-start mb-2">
-                      <div className="flex-1">
-                        <div className="text-sm text-gray-400">Video {video.sequence_order || video.id}</div>
-                        <div className="text-sm font-mono text-gray-500 truncate">
-                          {video.file_path.split('/').pop()}
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => handleDeleteVideo(video.id)}
-                        className="text-red-400 hover:text-red-300 ml-2"
-                        title="Delete video"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                    <div className="text-sm space-y-1">
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Duration:</span>
-                        <span>{formatDuration(video.duration_seconds)}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Resolution:</span>
-                        <span>{video.resolution}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Status:</span>
-                        <span
-                          className={
-                            video.processing_status === 'completed'
-                              ? 'text-green-400'
-                              : video.processing_status === 'failed'
-                              ? 'text-red-400'
-                              : 'text-yellow-400'
-                          }
-                        >
-                          {video.processing_status}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
+          <Group gap="lg">
+            <Group gap="xs">
+              <IconCalendar size={18} />
+              <Text c="dimmed">{formatDate(game.date)}</Text>
+            </Group>
+            {game.location && (
+              <Group gap="xs">
+                <IconMapPin size={18} />
+                <Text c="dimmed">{game.location}</Text>
+              </Group>
             )}
-          </div>
+          </Group>
 
-          {/* Roster Section */}
-          <div>
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-2xl font-bold">Game Roster</h2>
-              <button
-                onClick={() => setShowAddPlayerModal(true)}
-                className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg font-semibold transition-colors"
-              >
-                + Add Player
-              </button>
-            </div>
+          <Text size="lg" fw={500}>
+            <Text span fw={700}>{game.home_team}</Text>
+            <Text span c="dimmed"> vs </Text>
+            <Text span fw={700}>{game.away_team}</Text>
+          </Text>
+        </Stack>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Home Team */}
-              <div className="bg-gray-800 rounded-lg p-6">
-                <h3 className="text-xl font-bold mb-4">
-                  {game.home_team} ({homeRoster.length})
-                </h3>
+        {/* Error Message */}
+        {error && (
+          <Alert
+            icon={<IconAlertCircle size={18} />}
+            title="Error"
+            color="red"
+            withCloseButton
+            onClose={() => setError(null)}
+            mb="xl"
+          >
+            {error}
+          </Alert>
+        )}
+
+        {/* Videos Section */}
+        <Stack gap="md" mb="xl">
+          <Group justify="space-between">
+            <Group gap="xs">
+              <IconVideo size={24} />
+              <Title order={2}>Videos</Title>
+              <Badge size="lg">{videos.length}</Badge>
+            </Group>
+            <FileButton
+              onChange={handleVideoUpload}
+              accept="video/*"
+              disabled={isUploading}
+            >
+              {(props) => (
+                <Button
+                  {...props}
+                  leftSection={<IconUpload size={18} />}
+                  loading={isUploading}
+                >
+                  Upload Video
+                </Button>
+              )}
+            </FileButton>
+          </Group>
+
+          {videos.length === 0 ? (
+            <Center py="xl">
+              <Stack align="center" gap="md">
+                <IconVideo size={48} stroke={1.5} color="var(--mantine-color-dimmed)" />
+                <Text c="dimmed">No videos uploaded yet</Text>
+                <Text c="dimmed" size="sm">Upload a video to get started</Text>
+              </Stack>
+            </Center>
+          ) : (
+            <Grid>
+              {videos.map((video) => (
+                <Grid.Col key={video.id} span={{ base: 12, sm: 6, lg: 4 }}>
+                  <Card shadow="sm" withBorder>
+                    <Stack gap="sm">
+                      <Group justify="space-between" align="flex-start">
+                        <div>
+                          <Text size="xs" c="dimmed">Video {video.sequence_order || video.id}</Text>
+                          <Text size="xs" c="dimmed" lineClamp={1} style={{ fontFamily: 'monospace' }}>
+                            {video.file_path.split('/').pop()}
+                          </Text>
+                        </div>
+                        <ActionIcon
+                          color="red"
+                          variant="subtle"
+                          onClick={() => handleDeleteVideo(video.id)}
+                          title="Delete video"
+                        >
+                          <IconTrash size={18} />
+                        </ActionIcon>
+                      </Group>
+
+                      <Divider />
+
+                      <Stack gap="xs">
+                        <Group justify="space-between">
+                          <Group gap="xs">
+                            <IconClock size={16} />
+                            <Text size="sm" c="dimmed">Duration</Text>
+                          </Group>
+                          <Text size="sm">{formatDuration(video.duration_seconds)}</Text>
+                        </Group>
+
+                        <Group justify="space-between">
+                          <Text size="sm" c="dimmed">Resolution</Text>
+                          <Text size="sm">{video.resolution}</Text>
+                        </Group>
+
+                        <Group justify="space-between">
+                          <Text size="sm" c="dimmed">Status</Text>
+                          <Badge
+                            color={
+                              video.processing_status === 'completed'
+                                ? 'green'
+                                : video.processing_status === 'failed'
+                                ? 'red'
+                                : 'yellow'
+                            }
+                            variant="light"
+                          >
+                            {video.processing_status}
+                          </Badge>
+                        </Group>
+                      </Stack>
+                    </Stack>
+                  </Card>
+                </Grid.Col>
+              ))}
+            </Grid>
+          )}
+        </Stack>
+
+        {/* Roster Section */}
+        <Stack gap="md">
+          <Group justify="space-between">
+            <Group gap="xs">
+              <IconUsers size={24} />
+              <Title order={2}>Game Roster</Title>
+            </Group>
+            <Button
+              leftSection={<IconPlus size={18} />}
+              onClick={() => setShowAddPlayerModal(true)}
+            >
+              Add Player
+            </Button>
+          </Group>
+
+          <Grid>
+            {/* Home Team */}
+            <Grid.Col span={{ base: 12, lg: 6 }}>
+              <Paper shadow="sm" withBorder p="lg">
+                <Group justify="space-between" mb="md">
+                  <Title order={3}>{game.home_team}</Title>
+                  <Badge size="lg">{homeRoster.length}</Badge>
+                </Group>
+
                 {homeRoster.length === 0 ? (
-                  <div className="text-gray-400 text-center py-4">No players added</div>
+                  <Center py="md">
+                    <Text c="dimmed">No players added</Text>
+                  </Center>
                 ) : (
-                  <div className="space-y-2">
+                  <Stack gap="xs">
                     {homeRoster.map((r) => (
-                      <div
+                      <Group
                         key={r.id}
-                        className="flex justify-between items-center bg-gray-700 rounded p-3"
+                        justify="space-between"
+                        p="sm"
+                        style={{
+                          backgroundColor: 'var(--mantine-color-dark-6)',
+                          borderRadius: 'var(--mantine-radius-md)',
+                        }}
                       >
                         <div>
-                          <div className="font-semibold">{r.player.name}</div>
-                          <div className="text-sm text-gray-400">
+                          <Text fw={500}>{r.player.name}</Text>
+                          <Text size="sm" c="dimmed">
                             #{r.jersey_number_override || r.player.jersey_number}
-                          </div>
+                          </Text>
                         </div>
-                        <button
+                        <Button
+                          variant="subtle"
+                          color="red"
+                          size="xs"
                           onClick={() => handleRemovePlayerFromRoster(r.id)}
-                          className="text-red-400 hover:text-red-300"
                         >
                           Remove
-                        </button>
-                      </div>
+                        </Button>
+                      </Group>
                     ))}
-                  </div>
+                  </Stack>
                 )}
-              </div>
+              </Paper>
+            </Grid.Col>
 
-              {/* Away Team */}
-              <div className="bg-gray-800 rounded-lg p-6">
-                <h3 className="text-xl font-bold mb-4">
-                  {game.away_team} ({awayRoster.length})
-                </h3>
+            {/* Away Team */}
+            <Grid.Col span={{ base: 12, lg: 6 }}>
+              <Paper shadow="sm" withBorder p="lg">
+                <Group justify="space-between" mb="md">
+                  <Title order={3}>{game.away_team}</Title>
+                  <Badge size="lg">{awayRoster.length}</Badge>
+                </Group>
+
                 {awayRoster.length === 0 ? (
-                  <div className="text-gray-400 text-center py-4">No players added</div>
+                  <Center py="md">
+                    <Text c="dimmed">No players added</Text>
+                  </Center>
                 ) : (
-                  <div className="space-y-2">
+                  <Stack gap="xs">
                     {awayRoster.map((r) => (
-                      <div
+                      <Group
                         key={r.id}
-                        className="flex justify-between items-center bg-gray-700 rounded p-3"
+                        justify="space-between"
+                        p="sm"
+                        style={{
+                          backgroundColor: 'var(--mantine-color-dark-6)',
+                          borderRadius: 'var(--mantine-radius-md)',
+                        }}
                       >
                         <div>
-                          <div className="font-semibold">{r.player.name}</div>
-                          <div className="text-sm text-gray-400">
+                          <Text fw={500}>{r.player.name}</Text>
+                          <Text size="sm" c="dimmed">
                             #{r.jersey_number_override || r.player.jersey_number}
-                          </div>
+                          </Text>
                         </div>
-                        <button
+                        <Button
+                          variant="subtle"
+                          color="red"
+                          size="xs"
                           onClick={() => handleRemovePlayerFromRoster(r.id)}
-                          className="text-red-400 hover:text-red-300"
                         >
                           Remove
-                        </button>
-                      </div>
+                        </Button>
+                      </Group>
                     ))}
-                  </div>
+                  </Stack>
                 )}
-              </div>
-            </div>
-          </div>
-        </div>
+              </Paper>
+            </Grid.Col>
+          </Grid>
+        </Stack>
 
         {/* Add Player Modal */}
-        {showAddPlayerModal && (
-          <div
-            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
-            onClick={(e) => {
-              if (e.target === e.currentTarget) {
-                setShowAddPlayerModal(false);
-              }
-            }}
-          >
-            <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md">
-              <h2 className="text-2xl font-bold mb-4">Add Player to Roster</h2>
-
-              <div className="mb-4">
-                <label className="block text-sm font-medium mb-2">Team Side</label>
-                <div className="flex gap-4">
-                  <label className="flex items-center">
-                    <input
-                      type="radio"
-                      value="home"
-                      checked={selectedTeamSide === 'home'}
-                      onChange={(e) => setSelectedTeamSide(e.target.value as 'home' | 'away')}
-                      className="mr-2"
-                    />
-                    {game.home_team}
-                  </label>
-                  <label className="flex items-center">
-                    <input
-                      type="radio"
-                      value="away"
-                      checked={selectedTeamSide === 'away'}
-                      onChange={(e) => setSelectedTeamSide(e.target.value as 'home' | 'away')}
-                      className="mr-2"
-                    />
-                    {game.away_team}
-                  </label>
-                </div>
-              </div>
-
-              <div className="mb-6">
-                <label className="block text-sm font-medium mb-2">Select Player</label>
-                {availablePlayers.length === 0 ? (
-                  <div className="text-gray-400 text-center py-4">
-                    All players have been added to the roster
-                  </div>
-                ) : (
-                  <div className="max-h-64 overflow-y-auto space-y-2">
-                    {availablePlayers.map((player) => (
-                      <button
-                        key={player.id}
-                        onClick={() => handleAddPlayerToRoster(player.id, selectedTeamSide)}
-                        className="w-full text-left bg-gray-700 hover:bg-gray-600 rounded p-3 transition-colors"
-                      >
-                        <div className="font-semibold">{player.name}</div>
-                        <div className="text-sm text-gray-400">
-                          #{player.jersey_number} • {player.team}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="flex justify-end">
-                <button
-                  onClick={() => setShowAddPlayerModal(false)}
-                  className="px-4 py-2 bg-gray-600 hover:bg-gray-500 rounded transition-colors"
-                >
-                  Close
-                </button>
-              </div>
+        <Modal
+          opened={showAddPlayerModal}
+          onClose={() => setShowAddPlayerModal(false)}
+          title="Add Player to Roster"
+          size="md"
+        >
+          <Stack gap="md">
+            {/* Team Side Selection */}
+            <div>
+              <Text size="sm" fw={500} mb="xs">Team Side</Text>
+              <Radio.Group
+                value={selectedTeamSide}
+                onChange={(value) => setSelectedTeamSide(value as 'home' | 'away')}
+              >
+                <Group>
+                  <Radio value="home" label={game.home_team} />
+                  <Radio value="away" label={game.away_team} />
+                </Group>
+              </Radio.Group>
             </div>
-          </div>
-        )}
-      </div>
+
+            <Divider />
+
+            {/* Player Selection */}
+            <div>
+              <Text size="sm" fw={500} mb="xs">Select Player</Text>
+              {availablePlayers.length === 0 ? (
+                <Center py="md">
+                  <Text c="dimmed">All players have been added to the roster</Text>
+                </Center>
+              ) : (
+                <Stack gap="xs" mah={300} style={{ overflowY: 'auto' }}>
+                  {availablePlayers.map((player) => (
+                    <Button
+                      key={player.id}
+                      variant="light"
+                      fullWidth
+                      onClick={() => handleAddPlayerToRoster(player.id, selectedTeamSide)}
+                      styles={{ label: { justifyContent: 'flex-start' } }}
+                    >
+                      <Stack gap={0}>
+                        <Text fw={500}>{player.name}</Text>
+                        <Text size="xs" c="dimmed">
+                          #{player.jersey_number} • {player.team}
+                        </Text>
+                      </Stack>
+                    </Button>
+                  ))}
+                </Stack>
+              )}
+            </div>
+
+            <Group justify="flex-end">
+              <Button variant="subtle" onClick={() => setShowAddPlayerModal(false)}>
+                Close
+              </Button>
+            </Group>
+          </Stack>
+        </Modal>
+      </Container>
     </div>
   );
 }
