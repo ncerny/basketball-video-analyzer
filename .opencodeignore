@@ -1,0 +1,98 @@
+# OpenCode Context Optimization Configuration
+
+# Files and directories to exclude from context to reduce prompt size
+# This prevents quota exhaustion and "prompt too large" issues
+
+# Large binary files and media
+*.mov
+*.mp4
+*.avi
+*.mkv
+*.webm
+*.wmv
+*.flv
+*.m4v
+
+# Video directories (largest context consumers)
+backend/videos/
+frontend/dist/
+
+# Dependencies and build artifacts
+node_modules/
+venv/
+env/
+.venv/
+.env.venv/
+
+# Database files (can be large)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Cache and temporary files
+.cache/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+*.pyd
+
+# Lock files (can be very large)
+pnpm-lock.yaml
+poetry.lock
+package-lock.json
+yarn.lock
+
+# All backup and original files
+*_ORIGINAL.md
+*_OPTIMIZED.md
+*_BACKUP.*
+
+# Logs and runtime files
+*.log
+logs/
+.daemon.log
+
+# Build outputs
+build/
+dist/
+out/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git metadata (can be large in some cases)
+.git/
+.gitignore
+
+# Issue tracker logs (can grow large)
+.beads/daemon.log
+.beads/beads.db
+.beads/beads.db-shm
+.beads/beads.db-wal
+
+# Include only essential documentation
+# Keep: CLAUDE.md, AGENTS.md, README.md
+# Exclude: Large implementation details unless needed
+docs/implementation-plan.md
+docs/beads-structure.md
+docs/mvp-user-guide.md
+backend/README.md
+frontend/README.md
+backend/alembic/README.md
+backend/alembic/README.md
+
+# Exclude backup files
+CLAUDE_ORIGINAL.md
+AGENTS_ORIGINAL.md
+CONTEXT_OPTIMIZATION_GUIDE.md
