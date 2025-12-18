@@ -108,10 +108,51 @@ API Integration:
 
 ### Epic: Phase 2 - Computer Vision Integration (bbva-g2m)
 **Priority**: P1
-**Status**: Ready (can plan in parallel)
+**Status**: Ready to work
 **Description**: Semi-automatic player detection, tracking, and jersey number recognition
 
-**Note**: Tasks not yet created. Will be broken down when Phase 1 is underway.
+#### ML Foundation (Sequential Pipeline)
+1. `bbva-fut` - Set up ML model infrastructure (YOLOv8-nano, PyTorch) [P0] ✅ READY
+2. `bbva-olg` - Implement video frame extraction service [P0]
+   - Blocks on: `bbva-fut`
+3. `bbva-tlh` - Implement player detection service with YOLOv8 [P0]
+   - Blocks on: `bbva-fut`, `bbva-olg`
+4. `bbva-yjv` - Implement player tracking service with ByteTrack [P0]
+   - Blocks on: `bbva-tlh`
+
+#### Background Processing (Parallel with ML Foundation)
+5. `bbva-12x` - Implement background processing job system [P0] ✅ READY
+6. `bbva-r0t` - Create player detection API endpoints [P1]
+   - Blocks on: `bbva-yjv`, `bbva-12x`
+
+#### Player Identification
+7. `bbva-0oh` - Implement jersey number OCR service [P1]
+   - Blocks on: `bbva-tlh`
+8. `bbva-59j` - Implement player-detection matching service [P1]
+   - Blocks on: `bbva-0oh`, `bbva-yjv`
+
+#### Frontend Detection UI
+9. `bbva-90h` - Implement detection overlay component [P1]
+   - Blocks on: `bbva-r0t`
+10. `bbva-qjj` - Implement detection review UI [P1]
+    - Blocks on: `bbva-90h`, `bbva-59j`
+11. `bbva-99a` - Implement processing status UI [P1]
+    - Blocks on: `bbva-12x`
+
+#### Optional Enhancements
+12. `bbva-e5q` - Implement court detection service [P2]
+    - Blocks on: `bbva-fut`, `bbva-olg`
+
+#### Testing
+13. `bbva-x0n` - Write ML pipeline unit tests [P1]
+    - Blocks on: `bbva-yjv`, `bbva-0oh`
+14. `bbva-kz5` - End-to-end testing with CV pipeline [P1]
+    - Blocks on: `bbva-qjj`, `bbva-99a`
+
+**Parallelization Opportunities**:
+- `bbva-fut` (ML Infrastructure) and `bbva-12x` (Background Jobs) can run in parallel
+- After ML pipeline is complete, OCR and Detection API can run in parallel
+- Frontend components (overlay, status UI) can run in parallel after their backend deps
 
 ---
 
@@ -226,18 +267,17 @@ bd close bbva-78a --reason "Completed in PR #1"
 
 ## Next Steps
 
-1. **Start with setup tasks** (all can run in parallel):
-   - Backend initialization
-   - Frontend initialization
-   - Git setup
-   - Documentation
+1. **Phase 1 Complete** ✅
+   - All 37 Phase 1 tasks closed
+   - Backend API fully functional
+   - Frontend MVP with multi-video timeline
+   - Manual annotation workflow working
 
-2. **Then move to Phase 1**:
-   - Database layer (sequential: models → migrations → seed data)
-   - Backend services (parallel after migrations)
-   - Frontend components (parallel after frontend init)
-   - Integration (pages after both backend and frontend are ready)
-   - Testing and polish
+2. **Phase 2: Computer Vision** (Current)
+   - Start with `bbva-fut` (ML Infrastructure) and `bbva-12x` (Background Jobs) in parallel
+   - Then sequential ML pipeline: Frame Extraction → Detection → Tracking
+   - Parallel tracks: OCR and Detection API after dependencies clear
+   - Frontend UI after backend APIs ready
 
 3. **Future phases**: Break down when ready to start
 
@@ -262,9 +302,11 @@ test(backend): [bbva-7k4] add unit tests for video service
 
 ## Current Status Summary
 
-- **Total Epics**: 7
-- **Total Tasks Created**: 39 (Setup: 4, Phase 1: 29, Future Phases: 6 epics)
-- **Ready to Work**: 5 tasks (all setup tasks + Players API standalone)
-- **Blocked**: 34 tasks (waiting on dependencies)
+- **Total Issues**: 56
+- **Phase 1**: Complete (37 closed)
+- **Phase 2**: 14 tasks created
+- **Future Phases**: 4 epics (Phase 3-6)
+- **Ready to Work**: 7 issues (2 P0 Phase 2 tasks + 5 future epics)
+- **Blocked**: 12 tasks (waiting on dependencies)
 
-**Recommended Starting Point**: Work on all 4 setup tasks in parallel, then Phase 1 database layer.
+**Recommended Starting Point**: Work on `bbva-fut` (ML Infrastructure) and `bbva-12x` (Background Jobs) in parallel.
