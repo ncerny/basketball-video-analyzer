@@ -112,6 +112,9 @@ Thumbs.db
 *.sqlite
 *.sqlite3
 !.beads/*.db
+*.db-shm
+*.db-wal
+
 
 # Logs
 logs/
