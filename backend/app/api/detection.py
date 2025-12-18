@@ -1,0 +1,321 @@
+"""Detection API endpoints for player detection and job management."""
+
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.database import get_db
+from app.models.detection import PlayerDetection
+from app.models.video import Video as VideoModel
+from app.schemas.detection import (
+    BoundingBox,
+    Detection,
+    DetectionJobRequest,
+    DetectionJobResponse,
+    DetectionStats,
+    JobResponse,
+    JobProgress,
+    VideoDetectionsResponse,
+)
+from app.services.job_manager import JobStatus, get_job_manager
+
+router = APIRouter(tags=["detection"])
+
+
+async def _ensure_detection_worker_registered() -> None:
+    """Ensure the detection worker is registered with the job manager."""
+    job_manager = get_job_manager()
+    if "video_detection" not in job_manager.registered_job_types:
+        from app.services.detection_pipeline import create_detection_job_worker
+
+        await create_detection_job_worker(job_manager)
+
+
+@router.post(
+    "/videos/{video_id}/detect",
+    response_model=DetectionJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def start_detection(
+    video_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    request: DetectionJobRequest | None = None,
+) -> DetectionJobResponse:
+    """Start player detection for a video.
+
+    Submits a background job to detect players in the video frames.
+    Returns immediately with a job ID that can be used to poll status.
+
+    Detection uses YOLO for person/ball detection. Configure:
+    - sample_interval: Process every Nth frame (default: 3)
+    - batch_size: Frames per batch (default: 8)
+    - confidence_threshold: Minimum detection confidence (default: 0.5)
+    """
+    # Verify video exists
+    stmt = select(VideoModel).where(VideoModel.id == video_id)
+    result = await db.execute(stmt)
+    video = result.scalar_one_or_none()
+
+    if not video:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Video with id {video_id} not found",
+        )
+
+    # Get request parameters or defaults
+    params = request if request is not None else DetectionJobRequest()
+
+    # Ensure worker is registered
+    await _ensure_detection_worker_registered()
+
+    # Submit detection job
+    job_manager = get_job_manager()
+    job_id = await job_manager.submit_job(
+        job_type="video_detection",
+        metadata={
+            "video_id": video_id,
+            "sample_interval": params.sample_interval,
+            "batch_size": params.batch_size,
+            "confidence_threshold": params.confidence_threshold,
+        },
+    )
+
+    return DetectionJobResponse(
+        job_id=job_id,
+        video_id=video_id,
+        message=f"Detection job started. Poll GET /api/jobs/{job_id} for status.",
+    )
+
+
+@router.get("/jobs/{job_id}", response_model=JobResponse)
+async def get_job_status(job_id: str) -> JobResponse:
+    """Get the status of a background job.
+
+    Use this to poll for job completion after starting detection.
+    When status is 'completed', the result field contains detection statistics.
+    """
+    job_manager = get_job_manager()
+    job = job_manager.get_job(job_id)
+
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job with id {job_id} not found",
+        )
+
+    return JobResponse(
+        id=job.id,
+        job_type=job.job_type,
+        status=job.status.value,
+        progress=JobProgress(
+            current=job.progress.current,
+            total=job.progress.total,
+            percentage=job.progress.percentage,
+            message=job.progress.message,
+        ),
+        result=job.result,
+        error=job.error,
+        created_at=job.created_at,
+        started_at=job.started_at,
+        completed_at=job.completed_at,
+        metadata=job.metadata,
+    )
+
+
+@router.delete("/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def cancel_job(job_id: str) -> None:
+    """Cancel a running or pending job.
+
+    Only jobs in 'pending' or 'processing' status can be cancelled.
+    """
+    job_manager = get_job_manager()
+    job = job_manager.get_job(job_id)
+
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job with id {job_id} not found",
+        )
+
+    if job.status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot cancel job with status: {job.status.value}",
+        )
+
+    cancelled = await job_manager.cancel_job(job_id)
+    if not cancelled:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to cancel job",
+        )
+
+
+@router.get("/videos/{video_id}/detections", response_model=VideoDetectionsResponse)
+async def get_video_detections(
+    video_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    frame_start: Annotated[
+        int | None, Query(ge=0, description="Filter detections from this frame")
+    ] = None,
+    frame_end: Annotated[
+        int | None, Query(ge=0, description="Filter detections up to this frame")
+    ] = None,
+    min_confidence: Annotated[
+        float | None, Query(ge=0, le=1, description="Minimum confidence threshold")
+    ] = None,
+    limit: Annotated[int, Query(ge=1, le=10000, description="Maximum detections to return")] = 1000,
+) -> VideoDetectionsResponse:
+    """Get all player detections for a video.
+
+    Returns detection results from completed detection jobs.
+    Use filters to narrow results by frame range or confidence.
+    """
+    # Verify video exists
+    video_stmt = select(VideoModel).where(VideoModel.id == video_id)
+    video_result = await db.execute(video_stmt)
+    video = video_result.scalar_one_or_none()
+
+    if not video:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Video with id {video_id} not found",
+        )
+
+    # Build query for detections
+    stmt = select(PlayerDetection).where(PlayerDetection.video_id == video_id)
+
+    if frame_start is not None:
+        stmt = stmt.where(PlayerDetection.frame_number >= frame_start)
+    if frame_end is not None:
+        stmt = stmt.where(PlayerDetection.frame_number <= frame_end)
+    if min_confidence is not None:
+        stmt = stmt.where(PlayerDetection.confidence_score >= min_confidence)
+
+    stmt = stmt.order_by(PlayerDetection.frame_number, PlayerDetection.tracking_id).limit(limit)
+
+    result = await db.execute(stmt)
+    detections = result.scalars().all()
+
+    # Get count of unique frames
+    frames_stmt = select(func.count(func.distinct(PlayerDetection.frame_number))).where(
+        PlayerDetection.video_id == video_id
+    )
+    frames_result = await db.execute(frames_stmt)
+    frames_count = frames_result.scalar_one()
+
+    # Get total count (without limit)
+    count_stmt = select(func.count()).select_from(
+        select(PlayerDetection).where(PlayerDetection.video_id == video_id).subquery()
+    )
+    count_result = await db.execute(count_stmt)
+    total_count = count_result.scalar_one()
+
+    return VideoDetectionsResponse(
+        video_id=video_id,
+        total_detections=total_count,
+        detections=[
+            Detection(
+                id=d.id,
+                video_id=d.video_id,
+                frame_number=d.frame_number,
+                player_id=d.player_id,
+                bbox=BoundingBox(
+                    x=d.bbox_x,
+                    y=d.bbox_y,
+                    width=d.bbox_width,
+                    height=d.bbox_height,
+                ),
+                tracking_id=d.tracking_id,
+                confidence_score=d.confidence_score,
+            )
+            for d in detections
+        ],
+        frames_with_detections=frames_count,
+    )
+
+
+@router.get("/videos/{video_id}/detections/stats", response_model=DetectionStats)
+async def get_detection_stats(
+    video_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> DetectionStats:
+    """Get detection statistics for a video.
+
+    Returns aggregate statistics about detections without returning all detection data.
+    """
+    # Verify video exists
+    video_stmt = select(VideoModel).where(VideoModel.id == video_id)
+    video_result = await db.execute(video_stmt)
+    video = video_result.scalar_one_or_none()
+
+    if not video:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Video with id {video_id} not found",
+        )
+
+    # Get total detections
+    total_stmt = (
+        select(func.count())
+        .select_from(PlayerDetection)
+        .where(PlayerDetection.video_id == video_id)
+    )
+    total_result = await db.execute(total_stmt)
+    total_detections = total_result.scalar_one()
+
+    # Get unique frames count
+    frames_stmt = select(func.count(func.distinct(PlayerDetection.frame_number))).where(
+        PlayerDetection.video_id == video_id
+    )
+    frames_result = await db.execute(frames_stmt)
+    frames_with_detections = frames_result.scalar_one()
+
+    # Calculate average detections per frame
+    avg_per_frame = total_detections / frames_with_detections if frames_with_detections > 0 else 0.0
+
+    # Note: We don't have class_id stored in PlayerDetection, so we estimate
+    # For now, assume all detections are persons (balls are relatively rare)
+    # A proper implementation would store class_id in PlayerDetection
+    persons_detected = total_detections
+    balls_detected = 0
+
+    return DetectionStats(
+        video_id=video_id,
+        total_frames_processed=frames_with_detections,  # Approximation
+        total_detections=total_detections,
+        persons_detected=persons_detected,
+        balls_detected=balls_detected,
+        frames_with_detections=frames_with_detections,
+        avg_detections_per_frame=round(avg_per_frame, 2),
+    )
+
+
+@router.delete("/videos/{video_id}/detections", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_video_detections(
+    video_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """Delete all detections for a video.
+
+    Use this to clear detection results before re-running detection.
+    """
+    # Verify video exists
+    video_stmt = select(VideoModel).where(VideoModel.id == video_id)
+    video_result = await db.execute(video_stmt)
+    video = video_result.scalar_one_or_none()
+
+    if not video:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Video with id {video_id} not found",
+        )
+
+    # Delete all detections
+    from sqlalchemy import delete
+
+    delete_stmt = delete(PlayerDetection).where(PlayerDetection.video_id == video_id)
+    await db.execute(delete_stmt)
+    await db.commit()
