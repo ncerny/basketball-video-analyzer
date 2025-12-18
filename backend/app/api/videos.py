@@ -1,12 +1,14 @@
 """Videos API endpoints."""
 
+from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
 from app.models.video import ProcessingStatus, Video as VideoModel
 from app.schemas.video import Video, VideoCreate, VideoList, VideoUpdate
@@ -178,6 +180,110 @@ async def delete_video(
 
     await db.delete(video)
     await db.commit()
+
+
+@router.get("/{video_id}/stream")
+async def stream_video(
+    video_id: int,
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> StreamingResponse:
+    """Stream video file with support for range requests (seeking).
+
+    Supports HTTP Range requests for video seeking in browsers.
+    """
+    # Get video
+    stmt = select(VideoModel).where(VideoModel.id == video_id)
+    result = await db.execute(stmt)
+    video = result.scalar_one_or_none()
+
+    if not video:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Video with id {video_id} not found",
+        )
+
+    # Get absolute path to video file
+    video_path = Path(settings.video_storage_path) / video.file_path
+
+    if not video_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Video file not found: {video.file_path}",
+        )
+
+    file_size = video_path.stat().st_size
+
+    # Determine content type based on extension
+    extension = video_path.suffix.lower()
+    content_types = {
+        ".mp4": "video/mp4",
+        ".mov": "video/quicktime",
+        ".avi": "video/x-msvideo",
+        ".mkv": "video/x-matroska",
+        ".webm": "video/webm",
+    }
+    content_type = content_types.get(extension, "video/mp4")
+
+    # Parse range header
+    range_header = request.headers.get("range")
+
+    if range_header:
+        # Parse range request
+        range_match = range_header.replace("bytes=", "").split("-")
+        start = int(range_match[0]) if range_match[0] else 0
+        end = int(range_match[1]) if len(range_match) > 1 and range_match[1] else file_size - 1
+
+        # Clamp to valid range
+        start = max(0, start)
+        end = min(end, file_size - 1)
+        chunk_size = end - start + 1
+
+        # Use larger chunks for better streaming performance (256KB)
+        # This reduces the number of read syscalls and improves throughput
+        STREAM_CHUNK_SIZE = 262144
+
+        def iter_file():
+            with open(video_path, "rb") as f:
+                f.seek(start)
+                remaining = chunk_size
+                while remaining > 0:
+                    read_size = min(STREAM_CHUNK_SIZE, remaining)
+                    data = f.read(read_size)
+                    if not data:
+                        break
+                    remaining -= len(data)
+                    yield data
+
+        return StreamingResponse(
+            iter_file(),
+            status_code=206,
+            media_type=content_type,
+            headers={
+                "Content-Range": f"bytes {start}-{end}/{file_size}",
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(chunk_size),
+                "Cache-Control": "public, max-age=86400",  # Cache for 24 hours
+            },
+        )
+    else:
+        # Full file response with larger chunks
+        STREAM_CHUNK_SIZE = 262144
+
+        def iter_full_file():
+            with open(video_path, "rb") as f:
+                while chunk := f.read(STREAM_CHUNK_SIZE):
+                    yield chunk
+
+        return StreamingResponse(
+            iter_full_file(),
+            media_type=content_type,
+            headers={
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(file_size),
+                "Cache-Control": "public, max-age=86400",  # Cache for 24 hours
+            },
+        )
 
 
 @router.post("/{video_id}/thumbnail", response_model=Video)
