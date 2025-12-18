@@ -43,6 +43,8 @@ export const AnnotationForm: React.FC<AnnotationFormProps> = ({
   const videos = useTimelineStore(state => state.videos);
 
   // Form state
+  const [title, setTitle] = useState<string>(annotation?.title ?? '');
+  const [description, setDescription] = useState<string>(annotation?.description ?? '');
   const [startTime, setStartTime] = useState<number>(
     annotation?.game_timestamp_start ?? currentGameTime
   );
@@ -65,6 +67,8 @@ export const AnnotationForm: React.FC<AnnotationFormProps> = ({
   // Update form when annotation changes
   useEffect(() => {
     if (annotation) {
+      setTitle(annotation.title ?? '');
+      setDescription(annotation.description ?? '');
       setStartTime(annotation.game_timestamp_start);
       setEndTime(annotation.game_timestamp_end);
       setAnnotationType(annotation.annotation_type);
@@ -132,6 +136,8 @@ export const AnnotationForm: React.FC<AnnotationFormProps> = ({
 
     const data: CreateAnnotationDTO = {
       game_id: gameId,
+      title: title || undefined,
+      description: description || undefined,
       game_timestamp_start: startTime,
       game_timestamp_end: endTime,
       annotation_type: annotationType,
@@ -145,6 +151,34 @@ export const AnnotationForm: React.FC<AnnotationFormProps> = ({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
+      {/* Title */}
+      <div>
+        <label className="block text-sm font-medium text-gray-300 mb-2">
+          Title
+        </label>
+        <input
+          type="text"
+          value={title}
+          onChange={e => setTitle(e.target.value)}
+          className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+          placeholder="e.g., Fast break layup, Timeout called"
+        />
+      </div>
+
+      {/* Description */}
+      <div>
+        <label className="block text-sm font-medium text-gray-300 mb-2">
+          Description
+        </label>
+        <textarea
+          value={description}
+          onChange={e => setDescription(e.target.value)}
+          rows={3}
+          className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none resize-none"
+          placeholder="Add detailed notes about this annotation..."
+        />
+      </div>
+
       {/* Annotation Type */}
       <div>
         <label className="block text-sm font-medium text-gray-300 mb-2">

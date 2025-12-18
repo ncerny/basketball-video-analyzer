@@ -231,6 +231,12 @@ export const AnnotationList: React.FC<AnnotationListProps> = ({
 
                   {/* Info */}
                   <div className="flex-1">
+                    {/* Title */}
+                    {annotation.title && (
+                      <div className="font-medium text-white mb-1">
+                        {annotation.title}
+                      </div>
+                    )}
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-sm text-gray-300">
                         {formatTime(annotation.game_timestamp_start)} -{' '}
@@ -253,13 +259,16 @@ export const AnnotationList: React.FC<AnnotationListProps> = ({
                         </span>
                       )}
                     </div>
-                    <div className="mt-1 text-sm text-gray-400">
+                    {/* Description */}
+                    {annotation.description && (
+                      <div className="mt-1 text-sm text-gray-400 line-clamp-2">
+                        {annotation.description}
+                      </div>
+                    )}
+                    <div className="mt-1 text-xs text-gray-500">
                       Duration: {formatTime(
                         annotation.game_timestamp_end - annotation.game_timestamp_start
-                      )}
-                    </div>
-                    <div className="mt-1 text-xs text-gray-500">
-                      Created {annotation.created_by === 'ai' ? 'by AI' : 'manually'}
+                      )} • Created {annotation.created_by === 'ai' ? 'by AI' : 'manually'}
                     </div>
                   </div>
                 </div>
