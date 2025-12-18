@@ -39,6 +39,7 @@ torch = ">=2.2.0"
 torchvision = ">=0.17.0"
 ultralytics = "^8.3.0"
 numpy = "<2.0.0"  # ultralytics compatibility
+supervision = "^0.23.0"  # Version compatible with numpy <2.0
 
 [build-system]
 requires = ["poetry-core"]

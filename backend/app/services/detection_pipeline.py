@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.config import settings
+from app.ml.byte_tracker import PlayerTracker
 from app.ml.types import Detection, FrameDetections
 from app.ml.yolo_detector import YOLODetector
 from app.models.detection import PlayerDetection
@@ -29,6 +30,9 @@ class DetectionPipelineConfig:
     confidence_threshold: float = 0.5
     device: str = "cpu"
     delete_existing: bool = True  # Delete existing detections before processing
+    enable_tracking: bool = True  # Enable ByteTrack player tracking
+    tracking_buffer_seconds: float = 1.0  # How long to keep lost tracks
+    tracking_iou_threshold: float = 0.8  # IOU threshold for matching
 
 
 @dataclass
@@ -71,6 +75,7 @@ class DetectionPipeline:
             device=self._resolve_device(settings.ml_device),
         )
         self._detector: YOLODetector | None = None
+        self._tracker: PlayerTracker | None = None
         self._video_storage_path = Path(settings.video_storage_path)
 
     @staticmethod
@@ -99,6 +104,27 @@ class DetectionPipeline:
                 device=self._config.device,
             )
         return self._detector
+
+    def _get_tracker(self, fps: float) -> PlayerTracker:
+        """Get or create tracker instance.
+
+        Args:
+            fps: Video frame rate for motion prediction.
+
+        Returns:
+            PlayerTracker instance configured for this video.
+        """
+        if self._tracker is None:
+            # Calculate buffer in frames
+            buffer_frames = int(self._config.tracking_buffer_seconds * fps)
+
+            self._tracker = PlayerTracker(
+                track_activation_threshold=self._config.confidence_threshold,
+                lost_track_buffer=buffer_frames,
+                minimum_matching_threshold=self._config.tracking_iou_threshold,
+                frame_rate=int(fps),
+            )
+        return self._tracker
 
     async def process_video(
         self,
@@ -224,6 +250,9 @@ class DetectionPipeline:
         with FrameExtractor(video_path) as extractor:
             metadata = extractor.get_metadata()
 
+            # Initialize tracker if enabled
+            tracker = self._get_tracker(metadata.fps) if self._config.enable_tracking else None
+
             # Calculate total frames to process
             total_sampled_frames = extractor.count_sampled_frames(
                 sample_interval=self._config.sample_interval
@@ -247,9 +276,14 @@ class DetectionPipeline:
                         batch_frames, start_frame_number=batch_frame_numbers[0]
                     )
 
-                    # Store detections
+                    # Apply tracking and store detections
                     for i, frame_detections in enumerate(detections_list):
                         frame_num = batch_frame_numbers[i]
+
+                        # Apply tracking if enabled
+                        if tracker:
+                            frame_detections = tracker.update(frame_detections)
+
                         stats = await self._store_frame_detections(
                             video.id, frame_num, frame_detections
                         )
@@ -277,6 +311,11 @@ class DetectionPipeline:
 
                 for i, frame_detections in enumerate(detections_list):
                     frame_num = batch_frame_numbers[i]
+
+                    # Apply tracking if enabled
+                    if tracker:
+                        frame_detections = tracker.update(frame_detections)
+
                     stats = await self._store_frame_detections(
                         video.id, frame_num, frame_detections
                     )
@@ -308,6 +347,9 @@ class DetectionPipeline:
     ) -> dict[str, int]:
         """Store detections for a single frame.
 
+        Note: tracking_id now comes from ByteTrack and is persistent across frames
+        when tracking is enabled. Falls back to per-frame index if tracking disabled.
+
         Returns:
             Dict with counts: {"total", "persons", "balls"}
         """
@@ -315,8 +357,6 @@ class DetectionPipeline:
 
         for i, detection in enumerate(frame_detections.detections):
             # Create PlayerDetection record
-            # Note: tracking_id is assigned sequentially per frame for now
-            # A proper tracker (ByteTrack) would assign persistent IDs across frames
             player_detection = PlayerDetection(
                 video_id=video_id,
                 frame_number=frame_number,
@@ -325,7 +365,7 @@ class DetectionPipeline:
                 bbox_y=detection.bbox.y,
                 bbox_width=detection.bbox.width,
                 bbox_height=detection.bbox.height,
-                tracking_id=i,  # Temporary: per-frame index
+                tracking_id=detection.tracking_id if detection.tracking_id is not None else i,
                 confidence_score=detection.confidence,
             )
             self._db.add(player_detection)
