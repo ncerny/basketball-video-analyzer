@@ -30,11 +30,20 @@ export interface UpdateGameDTO {
   away_team?: string
 }
 
+export interface GameList {
+  games: Game[]
+  total: number
+  page: number
+  page_size: number
+  total_pages: number
+}
+
 // Video types
 export interface Video {
   id: number
   game_id: number
   file_path: string
+  thumbnail_path?: string
   duration_seconds: number
   fps: number
   resolution: string
@@ -44,6 +53,14 @@ export interface Video {
   recorded_at?: string
   sequence_order?: number
   game_time_offset?: number
+}
+
+export interface VideoList {
+  videos: Video[]
+  total: number
+  page: number
+  page_size: number
+  total_pages: number
 }
 
 export interface CreateVideoDTO {
@@ -59,6 +76,14 @@ export interface Player {
   team: string
   notes?: string
   created_at: string
+}
+
+export interface PlayerList {
+  players: Player[]
+  total: number
+  page: number
+  page_size: number
+  total_pages: number
 }
 
 export interface CreatePlayerDTO {
@@ -91,20 +116,34 @@ export interface CreateGameRosterDTO {
   jersey_number_override?: number
 }
 
+export interface GameRosterList {
+  rosters: GameRoster[]
+  total: number
+  page: number
+  page_size: number
+  total_pages: number
+}
+
 // Annotation types
 export interface Annotation {
   id: number
   game_id: number
+  title?: string
+  description?: string
   game_timestamp_start: number
   game_timestamp_end: number
   annotation_type: 'play' | 'event' | 'note'
   confidence_score?: number
   verified: boolean
   created_by: 'ai' | 'user'
+  created_at?: string
+  updated_at?: string
 }
 
 export interface CreateAnnotationDTO {
   game_id: number
+  title?: string
+  description?: string
   game_timestamp_start: number
   game_timestamp_end: number
   annotation_type: 'play' | 'event' | 'note'
@@ -114,11 +153,21 @@ export interface CreateAnnotationDTO {
 }
 
 export interface UpdateAnnotationDTO {
+  title?: string
+  description?: string
   game_timestamp_start?: number
   game_timestamp_end?: number
   annotation_type?: 'play' | 'event' | 'note'
   confidence_score?: number
   verified?: boolean
+}
+
+export interface AnnotationList {
+  annotations: Annotation[]
+  total: number
+  page: number
+  page_size: number
+  total_pages: number
 }
 
 // Play types

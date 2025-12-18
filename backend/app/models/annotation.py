@@ -45,6 +45,8 @@ class Annotation(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     game_id: Mapped[int] = mapped_column(ForeignKey("games.id", ondelete="CASCADE"))
+    title: Mapped[str | None] = mapped_column(nullable=True)  # Short title for the annotation
+    description: Mapped[str | None] = mapped_column(nullable=True)  # Detailed description/notes
     game_timestamp_start: Mapped[float] = mapped_column(
         Float
     )  # seconds from game start

@@ -9,6 +9,8 @@ class AnnotationBase(BaseModel):
     """Base annotation schema with common fields."""
 
     game_id: int = Field(..., ge=1, description="ID of the game this annotation belongs to")
+    title: str | None = Field(None, max_length=255, description="Short title for the annotation")
+    description: str | None = Field(None, description="Detailed description or notes")
     game_timestamp_start: float = Field(..., ge=0, description="Start time in seconds from game start")
     game_timestamp_end: float = Field(..., ge=0, description="End time in seconds from game start")
     annotation_type: str = Field(..., description="Type of annotation (play, event, note)")
@@ -29,6 +31,8 @@ class AnnotationCreate(AnnotationBase):
 class AnnotationUpdate(BaseModel):
     """Schema for updating an annotation (all fields optional)."""
 
+    title: str | None = Field(None, max_length=255)
+    description: str | None = None
     game_timestamp_start: float | None = Field(None, ge=0)
     game_timestamp_end: float | None = Field(None, ge=0)
     annotation_type: str | None = Field(None, description="play, event, or note")

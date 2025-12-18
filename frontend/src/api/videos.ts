@@ -30,7 +30,7 @@ export const videosAPI = {
     formData.append('file', file)
     formData.append('game_id', gameId.toString())
 
-    const response = await apiClient.post<Video>('/videos', formData, {
+    const response = await apiClient.post<Video>('/video-upload', formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },

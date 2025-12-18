@@ -82,6 +82,8 @@ async def create_annotation(
     # Create annotation
     annotation = AnnotationModel(
         game_id=annotation_data.game_id,
+        title=annotation_data.title,
+        description=annotation_data.description,
         game_timestamp_start=annotation_data.game_timestamp_start,
         game_timestamp_end=annotation_data.game_timestamp_end,
         annotation_type=annotation_type_enum,
@@ -332,6 +334,8 @@ def _build_annotation_response(annotation: AnnotationModel) -> Annotation:
     return Annotation(
         id=annotation.id,
         game_id=annotation.game_id,
+        title=annotation.title,
+        description=annotation.description,
         game_timestamp_start=annotation.game_timestamp_start,
         game_timestamp_end=annotation.game_timestamp_end,
         annotation_type=annotation.annotation_type.value,
