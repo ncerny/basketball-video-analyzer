@@ -26,6 +26,8 @@ export interface Annotation {
   game_timestamp_start: number // Seconds from game start
   game_timestamp_end: number // Seconds from game start
   annotation_type: 'play' | 'event' | 'note'
+  title?: string | null
+  description?: string | null
   confidence_score?: number
   verified: boolean
   created_by: 'ai' | 'user'

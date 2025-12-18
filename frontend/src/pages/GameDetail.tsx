@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import {
   Container,
   Title,
@@ -26,6 +26,7 @@ import {
   Anchor,
   Radio,
   Divider,
+  TextInput,
 } from '@mantine/core';
 import {
   IconUpload,
@@ -38,8 +39,13 @@ import {
   IconUsers,
   IconVideo,
   IconClock,
+  IconEdit,
+  IconCheck,
+  IconX,
+  IconGripVertical,
 } from '@tabler/icons-react';
 import { Navigation } from '../components/Navigation';
+import { VideoSequencer } from '../components/VideoSequencer';
 import { api } from '../services/api';
 import type { Game, Video, GameRoster, Player } from '../types/api';
 
@@ -50,6 +56,7 @@ interface RosterPlayerInfo extends GameRoster {
 export function GameDetail() {
   const { gameId } = useParams<{ gameId: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [game, setGame] = useState<Game | null>(null);
   const [videos, setVideos] = useState<Video[]>([]);
@@ -61,6 +68,27 @@ export function GameDetail() {
   const [isUploading, setIsUploading] = useState(false);
   const [showAddPlayerModal, setShowAddPlayerModal] = useState(false);
   const [selectedTeamSide, setSelectedTeamSide] = useState<'home' | 'away'>('home');
+  const [isEditMode, setIsEditMode] = useState(false);
+
+  // Edit mode state
+  const [editedGame, setEditedGame] = useState<Partial<Game>>({});
+
+  // Check for edit mode from URL parameter
+  useEffect(() => {
+    const editParam = searchParams.get('edit');
+    if (editParam === 'true' && game) {
+      setIsEditMode(true);
+      setEditedGame({
+        name: game.name,
+        date: game.date,
+        location: game.location,
+        home_team: game.home_team,
+        away_team: game.away_team,
+      });
+      // Remove the edit parameter from URL
+      setSearchParams({});
+    }
+  }, [searchParams, game, setSearchParams]);
 
   useEffect(() => {
     if (!gameId) {
@@ -82,12 +110,12 @@ export function GameDetail() {
         ]);
 
         setGame(gameData);
-        setVideos((videosData as any).videos || []);
-        setAllPlayers((playersData as any).players || []);
+        setVideos(videosData);
+        setAllPlayers(playersData);
 
         // Enrich roster with player information
-        const enrichedRoster: RosterPlayerInfo[] = ((rosterData as any).rosters || []).map((r: GameRoster) => {
-          const player = ((playersData as any).players || []).find((p: Player) => p.id === r.player_id);
+        const enrichedRoster: RosterPlayerInfo[] = rosterData.map((r: GameRoster) => {
+          const player = playersData.find((p: Player) => p.id === r.player_id);
           return {
             ...r,
             player: player || {
@@ -228,33 +256,137 @@ export function GameDetail() {
       <Container size="xl">
         {/* Header */}
         <Stack gap="md" mb="xl">
-          <Anchor component={Link} to="/" size="sm" c="blue">
-            <Group gap="xs">
-              <IconArrowLeft size={16} />
-              <span>Back to Games</span>
-            </Group>
-          </Anchor>
-
-          <Title order={1} size="h1">{game.name}</Title>
-
-          <Group gap="lg">
-            <Group gap="xs">
-              <IconCalendar size={18} />
-              <Text c="dimmed">{formatDate(game.date)}</Text>
-            </Group>
-            {game.location && (
+          <Group justify="space-between">
+            <Anchor component={Link} to="/" size="sm" c="blue">
               <Group gap="xs">
-                <IconMapPin size={18} />
-                <Text c="dimmed">{game.location}</Text>
+                <IconArrowLeft size={16} />
+                <span>Back to Games</span>
+              </Group>
+            </Anchor>
+
+            {!isEditMode ? (
+              <Button
+                leftSection={<IconEdit size={18} />}
+                variant="light"
+                onClick={() => {
+                  if (!game) return;
+                  setIsEditMode(true);
+                  setEditedGame({
+                    name: game.name,
+                    date: game.date,
+                    location: game.location || '',
+                    home_team: game.home_team,
+                    away_team: game.away_team,
+                  });
+                }}
+              >
+                Edit
+              </Button>
+            ) : (
+              <Group gap="xs">
+                <Button
+                  leftSection={<IconCheck size={18} />}
+                  color="green"
+                  onClick={async () => {
+                    if (!gameId) return;
+                    try {
+                      const updated = await api.games.update(parseInt(gameId), editedGame);
+                      setGame(updated);
+                      setIsEditMode(false);
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : 'Failed to save changes');
+                    }
+                  }}
+                >
+                  Save
+                </Button>
+                <Button
+                  leftSection={<IconX size={18} />}
+                  variant="light"
+                  color="gray"
+                  onClick={() => {
+                    setIsEditMode(false);
+                    setEditedGame({});
+                  }}
+                >
+                  Cancel
+                </Button>
               </Group>
             )}
           </Group>
 
-          <Text size="lg" fw={500}>
-            <Text span fw={700}>{game.home_team}</Text>
-            <Text span c="dimmed"> vs </Text>
-            <Text span fw={700}>{game.away_team}</Text>
-          </Text>
+          {!isEditMode ? (
+            <Title order={1} size="h1">{game.name}</Title>
+          ) : (
+            <TextInput
+              size="xl"
+              value={editedGame.name || ''}
+              onChange={(e) => setEditedGame(prev => ({ ...prev, name: e.target.value }))}
+              styles={{
+                input: {
+                  fontSize: 'var(--mantine-h1-font-size)',
+                  fontWeight: 700,
+                  padding: '0.5rem',
+                }
+              }}
+            />
+          )}
+
+          {!isEditMode ? (
+            <Group gap="lg">
+              <Group gap="xs">
+                <IconCalendar size={18} />
+                <Text c="dimmed">{formatDate(game.date)}</Text>
+              </Group>
+              {game.location && (
+                <Group gap="xs">
+                  <IconMapPin size={18} />
+                  <Text c="dimmed">{game.location}</Text>
+                </Group>
+              )}
+            </Group>
+          ) : (
+            <Group gap="md">
+              <TextInput
+                leftSection={<IconCalendar size={18} />}
+                type="date"
+                value={editedGame.date || ''}
+                onChange={(e) => setEditedGame(prev => ({ ...prev, date: e.target.value }))}
+                placeholder="Game date"
+              />
+              <TextInput
+                leftSection={<IconMapPin size={18} />}
+                value={editedGame.location || ''}
+                onChange={(e) => setEditedGame(prev => ({ ...prev, location: e.target.value }))}
+                placeholder="Location (optional)"
+                style={{ flex: 1 }}
+              />
+            </Group>
+          )}
+
+          {!isEditMode ? (
+            <Text size="lg" fw={500}>
+              <Text span fw={700}>{game.home_team}</Text>
+              <Text span c="dimmed"> vs </Text>
+              <Text span fw={700}>{game.away_team}</Text>
+            </Text>
+          ) : (
+            <Group gap="md" align="center">
+              <TextInput
+                value={editedGame.home_team || ''}
+                onChange={(e) => setEditedGame(prev => ({ ...prev, home_team: e.target.value }))}
+                placeholder="Home team"
+                styles={{ input: { fontSize: 'var(--mantine-font-size-lg)', fontWeight: 700 } }}
+              />
+              <Text c="dimmed" fw={500}>vs</Text>
+              <TextInput
+                value={editedGame.away_team || ''}
+                onChange={(e) => setEditedGame(prev => ({ ...prev, away_team: e.target.value }))}
+                placeholder="Away team"
+                styles={{ input: { fontSize: 'var(--mantine-font-size-lg)', fontWeight: 700 } }}
+              />
+            </Group>
+          )}
         </Stack>
 
         {/* Error Message */}
@@ -317,14 +449,16 @@ export function GameDetail() {
                             {video.file_path.split('/').pop()}
                           </Text>
                         </div>
-                        <ActionIcon
-                          color="red"
-                          variant="subtle"
-                          onClick={() => handleDeleteVideo(video.id)}
-                          title="Delete video"
-                        >
-                          <IconTrash size={18} />
-                        </ActionIcon>
+                        {isEditMode && (
+                          <ActionIcon
+                            color="red"
+                            variant="subtle"
+                            onClick={() => handleDeleteVideo(video.id)}
+                            title="Delete video"
+                          >
+                            <IconTrash size={18} />
+                          </ActionIcon>
+                        )}
                       </Group>
 
                       <Divider />
@@ -365,6 +499,10 @@ export function GameDetail() {
               ))}
             </Grid>
           )}
+
+          {videos.length > 0 && isEditMode && (
+            <VideoSequencer videos={videos} onVideosChange={setVideos} />
+          )}
         </Stack>
 
         {/* Roster Section */}
@@ -374,12 +512,14 @@ export function GameDetail() {
               <IconUsers size={24} />
               <Title order={2}>Game Roster</Title>
             </Group>
-            <Button
-              leftSection={<IconPlus size={18} />}
-              onClick={() => setShowAddPlayerModal(true)}
-            >
-              Add Player
-            </Button>
+            {isEditMode && (
+              <Button
+                leftSection={<IconPlus size={18} />}
+                onClick={() => setShowAddPlayerModal(true)}
+              >
+                Add Player
+              </Button>
+            )}
           </Group>
 
           <Grid>
@@ -413,14 +553,16 @@ export function GameDetail() {
                             #{r.jersey_number_override || r.player.jersey_number}
                           </Text>
                         </div>
-                        <Button
-                          variant="subtle"
-                          color="red"
-                          size="xs"
-                          onClick={() => handleRemovePlayerFromRoster(r.id)}
-                        >
-                          Remove
-                        </Button>
+                        {isEditMode && (
+                          <Button
+                            variant="subtle"
+                            color="red"
+                            size="xs"
+                            onClick={() => handleRemovePlayerFromRoster(r.id)}
+                          >
+                            Remove
+                          </Button>
+                        )}
                       </Group>
                     ))}
                   </Stack>
@@ -458,14 +600,16 @@ export function GameDetail() {
                             #{r.jersey_number_override || r.player.jersey_number}
                           </Text>
                         </div>
-                        <Button
-                          variant="subtle"
-                          color="red"
-                          size="xs"
-                          onClick={() => handleRemovePlayerFromRoster(r.id)}
-                        >
-                          Remove
-                        </Button>
+                        {isEditMode && (
+                          <Button
+                            variant="subtle"
+                            color="red"
+                            size="xs"
+                            onClick={() => handleRemovePlayerFromRoster(r.id)}
+                          >
+                            Remove
+                          </Button>
+                        )}
                       </Group>
                     ))}
                   </Stack>

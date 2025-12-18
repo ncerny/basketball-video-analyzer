@@ -5,7 +5,6 @@
  * - View list of all games
  * - Create new games
  * - Navigate to game analysis
- * - Delete games
  */
 
 import { useState, useEffect } from 'react';
@@ -24,18 +23,18 @@ import {
   Loader,
   Center,
   Alert,
-  ActionIcon,
   Badge,
+  ActionIcon,
 } from '@mantine/core';
 import {
   IconPlus,
   IconCalendar,
   IconUsers,
   IconMapPin,
-  IconTrash,
   IconEye,
   IconVideo,
   IconAlertCircle,
+  IconEdit,
 } from '@tabler/icons-react';
 import { Navigation } from '../components/Navigation';
 import { api } from '../services/api';
@@ -112,21 +111,6 @@ export const GamesList: React.FC = () => {
       console.error('Error creating game:', err);
     } finally {
       setIsCreating(false);
-    }
-  };
-
-  // Delete game
-  const handleDeleteGame = async (id: number, name: string) => {
-    if (!confirm(`Are you sure you want to delete "${name}"?`)) {
-      return;
-    }
-
-    try {
-      await api.games.delete(id);
-      setGames(prev => prev.filter(g => g.id !== id));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete game');
-      console.error('Error deleting game:', err);
     }
   };
 
@@ -280,7 +264,17 @@ export const GamesList: React.FC = () => {
               <Grid.Col key={game.id} span={{ base: 12, sm: 6, lg: 4 }}>
                 <Card shadow="sm" padding="lg" radius="md" withBorder>
                   <Stack gap="md">
-                    <Title order={3} lineClamp={2}>{game.name}</Title>
+                    <Group justify="space-between" align="flex-start">
+                      <Title order={3} lineClamp={2} style={{ flex: 1 }}>{game.name}</Title>
+                      <ActionIcon
+                        variant="subtle"
+                        color="gray"
+                        onClick={() => navigate(`/games/${game.id}?edit=true`)}
+                        title="Edit game"
+                      >
+                        <IconEdit size={18} />
+                      </ActionIcon>
+                    </Group>
 
                     <Stack gap="xs">
                       <Group gap="xs">
@@ -316,15 +310,6 @@ export const GamesList: React.FC = () => {
                       >
                         Analyze
                       </Button>
-                      <ActionIcon
-                        color="red"
-                        variant="light"
-                        size="lg"
-                        onClick={() => handleDeleteGame(game.id, game.name)}
-                        title="Delete game"
-                      >
-                        <IconTrash size={18} />
-                      </ActionIcon>
                     </Group>
                   </Stack>
                 </Card>

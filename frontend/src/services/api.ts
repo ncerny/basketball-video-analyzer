@@ -7,16 +7,20 @@
 import { APIError } from '../types/api';
 import type {
   Game,
+  GameList,
   CreateGameDTO,
   UpdateGameDTO,
   Player,
+  PlayerList,
   CreatePlayerDTO,
   UpdatePlayerDTO,
   Video,
-  CreateVideoDTO,
+  VideoList,
   GameRoster,
+  GameRosterList,
   CreateGameRosterDTO,
   Annotation,
+  AnnotationList,
   CreateAnnotationDTO,
   UpdateAnnotationDTO,
   Play,
@@ -88,7 +92,10 @@ export const gamesAPI = {
   /**
    * Get all games
    */
-  list: () => fetchAPI<Game[]>('/api/games'),
+  list: async (): Promise<Game[]> => {
+    const response = await fetchAPI<GameList>('/api/games?page_size=100');
+    return response.games;
+  },
 
   /**
    * Get a specific game by ID
@@ -129,7 +136,10 @@ export const playersAPI = {
   /**
    * Get all players
    */
-  list: () => fetchAPI<Player[]>('/api/players'),
+  list: async (): Promise<Player[]> => {
+    const response = await fetchAPI<PlayerList>('/api/players?page_size=100');
+    return response.players;
+  },
 
   /**
    * Get a specific player by ID
@@ -170,8 +180,10 @@ export const videosAPI = {
   /**
    * Get all videos for a game
    */
-  listByGame: (gameId: number) =>
-    fetchAPI<Video[]>(`/api/videos?game_id=${gameId}`),
+  listByGame: async (gameId: number): Promise<Video[]> => {
+    const response = await fetchAPI<VideoList>(`/api/videos?game_id=${gameId}&page_size=100`);
+    return response.videos;
+  },
 
   /**
    * Get a specific video by ID
@@ -186,7 +198,7 @@ export const videosAPI = {
     formData.append('file', file);
     formData.append('game_id', gameId.toString());
 
-    const response = await fetch(`${API_BASE_URL}/api/videos/upload`, {
+    const response = await fetch(`${API_BASE_URL}/api/video-upload`, {
       method: 'POST',
       body: formData,
     });
@@ -229,8 +241,10 @@ export const gameRostersAPI = {
   /**
    * Get all roster entries for a game
    */
-  listByGame: (gameId: number) =>
-    fetchAPI<GameRoster[]>(`/api/game-rosters?game_id=${gameId}`),
+  listByGame: async (gameId: number): Promise<GameRoster[]> => {
+    const response = await fetchAPI<GameRosterList>(`/api/game-rosters?game_id=${gameId}&page_size=100`);
+    return response.rosters;
+  },
 
   /**
    * Get a specific roster entry by ID
@@ -271,8 +285,10 @@ export const annotationsAPI = {
   /**
    * Get all annotations for a game
    */
-  listByGame: (gameId: number) =>
-    fetchAPI<Annotation[]>(`/api/annotations?game_id=${gameId}`),
+  listByGame: async (gameId: number): Promise<Annotation[]> => {
+    const response = await fetchAPI<AnnotationList>(`/api/annotations?game_id=${gameId}&page_size=100`);
+    return response.annotations;
+  },
 
   /**
    * Get a specific annotation by ID
