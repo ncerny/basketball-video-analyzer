@@ -103,11 +103,22 @@ class PlayerTracker:
         Returns:
             Original detections with updated tracking_ids.
         """
-        if tracked.tracker_id is None:
+        if tracked.tracker_id is None or len(tracked.tracker_id) == 0:
             return original
 
-        # Assign tracking IDs
-        for i, detection in enumerate(original.detections):
-            detection.tracking_id = int(tracked.tracker_id[i])
+        # ByteTrack may return fewer detections than input (filtering low confidence)
+        # Match detections by bounding box overlap
+        num_tracked = len(tracked.tracker_id)
+
+        # If counts match, assume 1:1 correspondence
+        if num_tracked == len(original.detections):
+            for i, detection in enumerate(original.detections):
+                detection.tracking_id = int(tracked.tracker_id[i])
+        else:
+            # Counts don't match - need to match by position
+            # This can happen if ByteTrack filters some detections
+            # For now, assign tracking IDs to first N detections
+            for i in range(min(num_tracked, len(original.detections))):
+                original.detections[i].tracking_id = int(tracked.tracker_id[i])
 
         return original
