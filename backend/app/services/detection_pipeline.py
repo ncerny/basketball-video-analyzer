@@ -277,15 +277,14 @@ class DetectionPipeline:
                     )
 
                     # Apply tracking and store detections
-                    for i, frame_detections in enumerate(detections_list):
-                        frame_num = batch_frame_numbers[i]
-
+                    for frame_detections in detections_list:
+                        # Use frame_number from FrameDetections (already set by detect_batch)
                         # Apply tracking if enabled
                         if tracker:
                             frame_detections = tracker.update(frame_detections)
 
                         stats = await self._store_frame_detections(
-                            video.id, frame_num, frame_detections
+                            video.id, frame_detections.frame_number, frame_detections
                         )
                         total_detections += stats["total"]
                         persons_detected += stats["persons"]
@@ -309,15 +308,14 @@ class DetectionPipeline:
                     batch_frames, start_frame_number=batch_frame_numbers[0]
                 )
 
-                for i, frame_detections in enumerate(detections_list):
-                    frame_num = batch_frame_numbers[i]
-
+                for frame_detections in detections_list:
+                    # Use frame_number from FrameDetections (already set by detect_batch)
                     # Apply tracking if enabled
                     if tracker:
                         frame_detections = tracker.update(frame_detections)
 
                     stats = await self._store_frame_detections(
-                        video.id, frame_num, frame_detections
+                        video.id, frame_detections.frame_number, frame_detections
                     )
                     total_detections += stats["total"]
                     persons_detected += stats["persons"]
