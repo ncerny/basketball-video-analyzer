@@ -156,10 +156,14 @@ class TestDetectionPipeline:
             mock_settings.yolo_confidence_threshold = 0.5
             mock_settings.ml_device = "cpu"
             mock_settings.yolo_model_name = "yolov8n.pt"
+            mock_settings.yolo_batch_size_cpu = 8
+            mock_settings.yolo_batch_size_mps = 16
+            mock_settings.yolo_batch_size_cuda = 32
+            mock_settings.enable_inference_timing = False
             pipeline = DetectionPipeline(mock_db)
             result = await pipeline.process_video(1)
 
-        assert "Video file not found" in result.error
+        assert result.error is not None and "Video file not found" in result.error
         assert mock_video.processing_status == ProcessingStatus.FAILED
 
     @pytest.mark.asyncio
@@ -198,6 +202,10 @@ class TestDetectionPipeline:
             mock_settings.yolo_confidence_threshold = 0.5
             mock_settings.ml_device = "cpu"
             mock_settings.yolo_model_name = "yolov8n.pt"
+            mock_settings.yolo_batch_size_cpu = 8
+            mock_settings.yolo_batch_size_mps = 16
+            mock_settings.yolo_batch_size_cuda = 32
+            mock_settings.enable_inference_timing = False
             # Setup extractor mock
             mock_extractor_instance = MagicMock()
             mock_extractor_instance.get_metadata.return_value = mock_metadata
@@ -255,6 +263,11 @@ class TestDetectionPipeline:
             mock_settings.yolo_confidence_threshold = 0.5
             mock_settings.ml_device = "cpu"
             mock_settings.yolo_model_name = "yolov8n.pt"
+            mock_settings.yolo_batch_size_cpu = 8
+            mock_settings.yolo_batch_size_mps = 16
+            mock_settings.yolo_batch_size_cuda = 32
+            mock_settings.enable_inference_timing = False
+            mock_metadata.fps = 30.0
             mock_extractor = MagicMock()
             mock_extractor.get_metadata.return_value = mock_metadata
             mock_extractor.count_sampled_frames.return_value = 1
@@ -296,6 +309,11 @@ class TestDetectionPipeline:
             mock_settings.yolo_confidence_threshold = 0.5
             mock_settings.ml_device = "cpu"
             mock_settings.yolo_model_name = "yolov8n.pt"
+            mock_settings.yolo_batch_size_cpu = 8
+            mock_settings.yolo_batch_size_mps = 16
+            mock_settings.yolo_batch_size_cuda = 32
+            mock_settings.enable_inference_timing = False
+            mock_metadata.fps = 30.0
             mock_extractor = MagicMock()
             mock_extractor.get_metadata.return_value = mock_metadata
             mock_extractor.count_sampled_frames.return_value = 0
@@ -329,12 +347,16 @@ class TestDetectionPipeline:
             mock_settings.yolo_confidence_threshold = 0.5
             mock_settings.ml_device = "cpu"
             mock_settings.yolo_model_name = "yolov8n.pt"
+            mock_settings.yolo_batch_size_cpu = 8
+            mock_settings.yolo_batch_size_mps = 16
+            mock_settings.yolo_batch_size_cuda = 32
+            mock_settings.enable_inference_timing = False
             MockExtractor.side_effect = RuntimeError("Extractor failed")
 
             pipeline = DetectionPipeline(mock_db)
             result = await pipeline.process_video(1)
 
-        assert "Extractor failed" in result.error
+        assert result.error is not None and "Extractor failed" in result.error
         assert mock_video.processing_status == ProcessingStatus.FAILED
 
     def test_resolve_device_auto_cpu(self):

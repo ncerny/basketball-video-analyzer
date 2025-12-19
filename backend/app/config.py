@@ -24,8 +24,16 @@ class Settings(BaseSettings):
     ml_models_path: str = "./models"
     ml_device: Literal["cpu", "mps", "cuda", "auto"] = "auto"
     yolo_model_name: str = "yolov8n.pt"
-    yolo_confidence_threshold: float = 0.5
+    yolo_confidence_threshold: float = 0.35
     yolo_person_class_id: int = 0
+
+    # GPU-specific performance settings
+    yolo_batch_size_cpu: int = 8
+    yolo_batch_size_mps: int = 16
+    yolo_batch_size_cuda: int = 32
+
+    # Enable performance logging
+    enable_inference_timing: bool = False
 
     @property
     def models_dir(self) -> Path:

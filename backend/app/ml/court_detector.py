@@ -38,6 +38,7 @@ class CourtDetector:
         self._line_threshold = line_threshold
         self._min_line_length = min_line_length
         self._max_line_gap = max_line_gap
+        self._last_mask: np.ndarray | None = None
 
     def detect_court_mask(self, frame: Any) -> np.ndarray:
         """Detect court boundaries and create a binary mask.
@@ -73,20 +74,23 @@ class CourtDetector:
         )
 
         if lines is None or len(lines) == 0:
-            # No court detected - return full frame mask (assume all is court)
-            return np.ones((height, width), dtype=np.uint8) * 255
+            # No court detected - use fallback mask
+            return self._get_fallback_mask(height, width)
 
         # Find court boundary by analyzing line positions
         # Basketball courts typically have strong horizontal and vertical lines
         boundary_points = self._extract_court_boundary(lines, width, height)
 
         if boundary_points is None:
-            # Couldn't determine court - return full frame mask
-            return np.ones((height, width), dtype=np.uint8) * 255
+            # Couldn't determine court - use fallback mask
+            return self._get_fallback_mask(height, width)
 
         # Create mask from boundary polygon
         mask = np.zeros((height, width), dtype=np.uint8)
         cv2.fillPoly(mask, [boundary_points], 255)
+
+        # Cache successful detection for future fallback
+        self._last_mask = mask.copy()
 
         return mask
 
@@ -148,14 +152,54 @@ class CourtDetector:
         right = min(width, right + margin)
 
         # Create rectangular boundary
-        boundary = np.array([
-            [left, top],
-            [right, top],
-            [right, bottom],
-            [left, bottom],
-        ], dtype=np.int32)
+        boundary = np.array(
+            [
+                [left, top],
+                [right, top],
+                [right, bottom],
+                [left, bottom],
+            ],
+            dtype=np.int32,
+        )
 
         return boundary
+
+    def _conservative_fallback_mask(self, height: int, width: int) -> np.ndarray:
+        """Create a conservative central mask when court detection fails.
+
+        Uses inner 70% of frame to exclude sidelines/audience.
+
+        Args:
+            height: Frame height.
+            width: Frame width.
+
+        Returns:
+            Binary mask where central 70% is 255, margins are 0.
+        """
+        mask = np.zeros((height, width), dtype=np.uint8)
+        margin_x = int(width * 0.15)
+        margin_y = int(height * 0.15)
+        mask[margin_y : height - margin_y, margin_x : width - margin_x] = 255
+        return mask
+
+    def _get_fallback_mask(self, height: int, width: int) -> np.ndarray:
+        """Get fallback mask when court detection fails.
+
+        Prefers cached mask if available and dimensions match,
+        otherwise returns a conservative central fallback.
+
+        Args:
+            height: Frame height.
+            width: Frame width.
+
+        Returns:
+            Fallback binary mask.
+        """
+        if self._last_mask is not None:
+            h, w = self._last_mask.shape
+            if h == height and w == width:
+                return self._last_mask
+        return self._conservative_fallback_mask(height, width)
 
     def is_point_in_court(self, x: float, y: float, mask: np.ndarray) -> bool:
         """Check if a point is inside the court mask.

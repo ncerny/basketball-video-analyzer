@@ -64,9 +64,13 @@ class TestPlayerTracker:
         mock_tracker_instance = MagicMock()
         mock_bytetrack.return_value = mock_tracker_instance
 
-        # Mock tracked detections with tracking IDs
+        # Mock tracked detections with all required attributes for _from_supervision_detections
         mock_tracked = MagicMock()
+        mock_tracked.xyxy = np.array([[10, 20, 110, 220], [10, 20, 110, 220], [10, 20, 110, 220]])
+        mock_tracked.confidence = np.array([0.9, 0.85, 0.8])
+        mock_tracked.class_id = np.array([0, 0, 0])
         mock_tracked.tracker_id = np.array([1, 2, 3])
+        mock_tracked.__len__ = MagicMock(return_value=3)
         mock_tracker_instance.update_with_detections.return_value = mock_tracked
 
         # Create test detections
@@ -91,13 +95,13 @@ class TestPlayerTracker:
 
     @patch("app.ml.byte_tracker.sv.ByteTrack")
     def test_update_handles_no_tracker_id(self, mock_bytetrack: MagicMock) -> None:
-        """Test update when ByteTrack returns None for tracker_id."""
+        """Test update when ByteTrack returns empty detections (filtered out)."""
         mock_tracker_instance = MagicMock()
         mock_bytetrack.return_value = mock_tracker_instance
 
-        # Mock tracked detections with no tracking IDs
+        # Mock empty tracked detections (ByteTrack filtered out low-confidence detection)
         mock_tracked = MagicMock()
-        mock_tracked.tracker_id = None
+        mock_tracked.__len__ = MagicMock(return_value=0)
         mock_tracker_instance.update_with_detections.return_value = mock_tracked
 
         bbox = BoundingBox(x=10, y=20, width=100, height=200)
@@ -109,8 +113,8 @@ class TestPlayerTracker:
         tracker = PlayerTracker()
         result = tracker.update(frame_detections)
 
-        # Should return original without modification
-        assert result.detections[0].tracking_id is None
+        # Should return empty detections when ByteTrack filters them out
+        assert len(result.detections) == 0
 
     @patch("app.ml.byte_tracker.sv.ByteTrack")
     def test_reset(self, mock_bytetrack: MagicMock) -> None:
@@ -175,11 +179,20 @@ class TestPlayerTracker:
         mock_bytetrack.return_value = mock_tracker_instance
 
         # Simulate same player tracked across frames with same ID
+        # Each mock needs all attributes required by _from_supervision_detections
         mock_tracked1 = MagicMock()
+        mock_tracked1.xyxy = np.array([[10, 20, 110, 220], [10, 20, 110, 220]])
+        mock_tracked1.confidence = np.array([0.9, 0.85])
+        mock_tracked1.class_id = np.array([0, 0])
         mock_tracked1.tracker_id = np.array([1, 2])
+        mock_tracked1.__len__ = MagicMock(return_value=2)
 
         mock_tracked2 = MagicMock()
+        mock_tracked2.xyxy = np.array([[10, 20, 110, 220], [10, 20, 110, 220]])
+        mock_tracked2.confidence = np.array([0.88, 0.83])
+        mock_tracked2.class_id = np.array([0, 0])
         mock_tracked2.tracker_id = np.array([1, 2])  # Same IDs
+        mock_tracked2.__len__ = MagicMock(return_value=2)
 
         mock_tracker_instance.update_with_detections.side_effect = [mock_tracked1, mock_tracked2]
 

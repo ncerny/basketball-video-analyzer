@@ -5,6 +5,8 @@ to process videos and identify players.
 """
 
 import asyncio
+import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -33,10 +35,10 @@ class DetectionPipelineConfig:
     device: str = "cpu"
     delete_existing: bool = True  # Delete existing detections before processing
     enable_tracking: bool = True  # Enable ByteTrack player tracking
-    tracking_buffer_seconds: float = 1.0  # How long to keep lost tracks
-    tracking_iou_threshold: float = 0.8  # IOU threshold for matching
+    tracking_buffer_seconds: float = 2.0  # How long to keep lost tracks
+    tracking_iou_threshold: float = 0.6  # IOU threshold for matching
     enable_court_detection: bool = True  # Enable court boundary detection
-    court_overlap_threshold: float = 0.3  # Minimum overlap with court to keep detection
+    court_overlap_threshold: float = 0.2  # Minimum overlap with court to keep detection
 
 
 @dataclass
@@ -53,6 +55,9 @@ class DetectionPipelineResult:
 
 # Progress callback type: (current_step, total_steps, message)
 ProgressCallback = Callable[[int, int, str], None]
+
+# Logger for performance metrics
+logger = logging.getLogger(__name__)
 
 
 class DetectionPipeline:
@@ -74,10 +79,21 @@ class DetectionPipeline:
             config: Pipeline configuration (uses defaults if None).
         """
         self._db = db
+        resolved_device = self._resolve_device(settings.ml_device)
+        optimal_batch_size = self._get_optimal_batch_size(resolved_device)
         self._config = config or DetectionPipelineConfig(
             confidence_threshold=settings.yolo_confidence_threshold,
-            device=self._resolve_device(settings.ml_device),
+            device=resolved_device,
+            batch_size=optimal_batch_size,
         )
+
+        # Log device and batch size configuration
+        logger.info(
+            f"Detection pipeline initialized: device={resolved_device}, "
+            f"batch_size={optimal_batch_size}, "
+            f"confidence_threshold={self._config.confidence_threshold}"
+        )
+
         self._detector: YOLODetector | None = None
         self._tracker: PlayerTracker | None = None
         self._court_detector: CourtDetector | None = None
@@ -99,6 +115,16 @@ class DetectionPipeline:
                 pass
             return "cpu"
         return device_setting
+
+    @staticmethod
+    def _get_optimal_batch_size(device: str) -> int:
+        """Get optimal batch size based on device type."""
+        if device == "cuda":
+            return settings.yolo_batch_size_cuda
+        elif device == "mps":
+            return settings.yolo_batch_size_mps
+        else:
+            return settings.yolo_batch_size_cpu
 
     def _get_detector(self) -> YOLODetector:
         """Get or create the YOLO detector instance."""
@@ -266,10 +292,19 @@ class DetectionPipeline:
             metadata = extractor.get_metadata()
 
             # Initialize tracker if enabled
-            tracker = self._get_tracker(metadata.fps) if self._config.enable_tracking else None
+            # Bug fix: Use effective FPS based on sample interval, not raw video FPS
+            # The tracker only sees sampled frames, so motion prediction must account for this
+            if self._config.enable_tracking:
+                effective_fps = metadata.fps / self._config.sample_interval
+                tracker = self._get_tracker(effective_fps)
+                tracker.reset()  # Ensure clean state for new video
+            else:
+                tracker = None
 
             # Initialize court detector if enabled
-            court_detector = self._get_court_detector() if self._config.enable_court_detection else None
+            court_detector = (
+                self._get_court_detector() if self._config.enable_court_detection else None
+            )
 
             # Calculate total frames to process
             total_sampled_frames = extractor.count_sampled_frames(
@@ -291,35 +326,56 @@ class DetectionPipeline:
                 # Process batch when full
                 if len(batch_frames) >= self._config.batch_size:
                     # Run CPU-intensive detection in thread to avoid blocking event loop
+                    batch_start_time = time.time()
                     detections_list = await asyncio.to_thread(
-                        detector.detect_batch,
-                        batch_frames,
-                        batch_frame_numbers[0]
+                        detector.detect_batch, batch_frames, batch_frame_numbers[0]
                     )
+                    batch_inference_time = time.time() - batch_start_time
 
-                    # Apply court detection and tracking
+                    # Log performance metrics if enabled
+                    if settings.enable_inference_timing:
+                        fps = len(batch_frames) / batch_inference_time
+                        logger.info(
+                            f"Detection batch: {len(batch_frames)} frames in "
+                            f"{batch_inference_time:.2f}s ({fps:.1f} fps) on {self._config.device}"
+                        )
+
+                    # Apply tracking and court detection
+                    # Bug fix: Track BEFORE court filtering to maintain stable track IDs
+                    # Filter persons only for tracking (balls cause spurious associations)
                     for i, frame_detections in enumerate(detections_list):
-                        # Use frame_number from FrameDetections (already set by detect_batch)
+                        frame = batch_frames[i]
 
-                        # Filter detections based on court boundaries (CPU-intensive, run in thread)
-                        if court_detector:
-                            frame = batch_frames[i]
-                            frame_detections = await asyncio.to_thread(
-                                self._filter_detections_by_court,
-                                frame_detections,
-                                frame,
-                                court_detector
-                            )
+                        # 1. Separate persons from balls (track persons only)
+                        person_detections, other_detections = self._filter_persons_only(
+                            frame_detections
+                        )
 
-                        # Apply tracking if enabled (also CPU-intensive, run in thread)
+                        # 2. Apply tracking to persons FIRST (before court filtering)
                         if tracker:
-                            frame_detections = await asyncio.to_thread(
-                                tracker.update,
-                                frame_detections
+                            person_detections = await asyncio.to_thread(
+                                tracker.update, person_detections
                             )
+
+                        # 3. Apply court filter to tracked persons
+                        if court_detector:
+                            person_detections = await asyncio.to_thread(
+                                self._filter_detections_by_court,
+                                person_detections,
+                                frame,
+                                court_detector,
+                            )
+
+                        # 4. Combine filtered persons with other detections (balls)
+                        final_detections = FrameDetections(
+                            frame_number=frame_detections.frame_number,
+                            detections=person_detections.detections + other_detections,
+                            frame_width=frame_detections.frame_width,
+                            frame_height=frame_detections.frame_height,
+                        )
 
                         stats = await self._store_frame_detections(
-                            video.id, frame_detections.frame_number, frame_detections
+                            video.id, final_detections.frame_number, final_detections
                         )
                         total_detections += stats["total"]
                         persons_detected += stats["persons"]
@@ -340,34 +396,54 @@ class DetectionPipeline:
             # Process remaining frames
             if batch_frames:
                 # Run CPU-intensive detection in thread to avoid blocking event loop
+                batch_start_time = time.time()
                 detections_list = await asyncio.to_thread(
-                    detector.detect_batch,
-                    batch_frames,
-                    batch_frame_numbers[0]
+                    detector.detect_batch, batch_frames, batch_frame_numbers[0]
                 )
+                batch_inference_time = time.time() - batch_start_time
 
+                # Log performance metrics if enabled
+                if settings.enable_inference_timing:
+                    fps = len(batch_frames) / batch_inference_time
+                    logger.info(
+                        f"Detection final batch: {len(batch_frames)} frames in "
+                        f"{batch_inference_time:.2f}s ({fps:.1f} fps) on {self._config.device}"
+                    )
+
+                # Apply tracking and court detection (same as main batch)
                 for i, frame_detections in enumerate(detections_list):
-                    # Use frame_number from FrameDetections (already set by detect_batch)
+                    frame = batch_frames[i]
 
-                    # Filter detections based on court boundaries (CPU-intensive, run in thread)
-                    if court_detector:
-                        frame = batch_frames[i]
-                        frame_detections = await asyncio.to_thread(
-                            self._filter_detections_by_court,
-                            frame_detections,
-                            frame,
-                            court_detector
-                        )
+                    # 1. Separate persons from balls (track persons only)
+                    person_detections, other_detections = self._filter_persons_only(
+                        frame_detections
+                    )
 
-                    # Apply tracking if enabled (also CPU-intensive, run in thread)
+                    # 2. Apply tracking to persons FIRST (before court filtering)
                     if tracker:
-                        frame_detections = await asyncio.to_thread(
-                            tracker.update,
-                            frame_detections
+                        person_detections = await asyncio.to_thread(
+                            tracker.update, person_detections
                         )
+
+                    # 3. Apply court filter to tracked persons
+                    if court_detector:
+                        person_detections = await asyncio.to_thread(
+                            self._filter_detections_by_court,
+                            person_detections,
+                            frame,
+                            court_detector,
+                        )
+
+                    # 4. Combine filtered persons with other detections (balls)
+                    final_detections = FrameDetections(
+                        frame_number=frame_detections.frame_number,
+                        detections=person_detections.detections + other_detections,
+                        frame_width=frame_detections.frame_width,
+                        frame_height=frame_detections.frame_height,
+                    )
 
                     stats = await self._store_frame_detections(
-                        video.id, frame_detections.frame_number, frame_detections
+                        video.id, final_detections.frame_number, final_detections
                     )
                     total_detections += stats["total"]
                     persons_detected += stats["persons"]
@@ -387,6 +463,32 @@ class DetectionPipeline:
             total_detections=total_detections,
             persons_detected=persons_detected,
             balls_detected=balls_detected,
+        )
+
+    def _filter_persons_only(
+        self, frame_detections: FrameDetections
+    ) -> tuple[FrameDetections, list[Detection]]:
+        """Separate person and non-person detections.
+
+        Ball detections (class_id=32) can cause spurious associations in the tracker.
+        We track persons only and keep balls separate.
+
+        Args:
+            frame_detections: All detections from YOLO.
+
+        Returns:
+            Tuple of (persons_only FrameDetections, list of other detections like balls)
+        """
+        persons = [d for d in frame_detections.detections if d.is_person]
+        others = [d for d in frame_detections.detections if not d.is_person]
+        return (
+            FrameDetections(
+                frame_number=frame_detections.frame_number,
+                detections=persons,
+                frame_width=frame_detections.frame_width,
+                frame_height=frame_detections.frame_height,
+            ),
+            others,
         )
 
     def _filter_detections_by_court(
