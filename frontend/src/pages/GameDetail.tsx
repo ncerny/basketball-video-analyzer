@@ -140,24 +140,20 @@ export function GameDetail() {
 
         setRoster(enrichedRoster);
 
-        // Load detection stats for all videos
-        const statsPromises = videosData.map(async (video: Video) => {
-          try {
-            const stats = await detectionAPI.getDetectionStats(video.id);
-            return { videoId: video.id, stats };
-          } catch {
-            return null;
-          }
-        });
-
-        const statsResults = await Promise.all(statsPromises);
-        const statsMap: Record<number, DetectionStats> = {};
-        statsResults.forEach(result => {
-          if (result && result.stats.total_detections > 0) {
-            statsMap[result.videoId] = result.stats;
-          }
-        });
-        setDetectionStats(statsMap);
+        // Load detection stats for all videos (non-blocking, done after main data loads)
+        // This prevents page load from being delayed by stats API calls
+        Promise.all(
+          videosData.map(async (video: Video) => {
+            try {
+              const stats = await detectionAPI.getDetectionStats(video.id);
+              if (stats.total_detections > 0) {
+                setDetectionStats(prev => ({ ...prev, [video.id]: stats }));
+              }
+            } catch {
+              // Ignore errors (likely no detections exist yet)
+            }
+          })
+        );
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load game data');
       } finally {
