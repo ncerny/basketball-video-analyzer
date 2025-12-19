@@ -272,16 +272,22 @@ class DetectionPipeline:
 
                 # Process batch when full
                 if len(batch_frames) >= self._config.batch_size:
-                    detections_list = detector.detect_batch(
-                        batch_frames, start_frame_number=batch_frame_numbers[0]
+                    # Run CPU-intensive detection in thread to avoid blocking event loop
+                    detections_list = await asyncio.to_thread(
+                        detector.detect_batch,
+                        batch_frames,
+                        batch_frame_numbers[0]
                     )
 
                     # Apply tracking and store detections
                     for frame_detections in detections_list:
                         # Use frame_number from FrameDetections (already set by detect_batch)
-                        # Apply tracking if enabled
+                        # Apply tracking if enabled (also CPU-intensive, run in thread)
                         if tracker:
-                            frame_detections = tracker.update(frame_detections)
+                            frame_detections = await asyncio.to_thread(
+                                tracker.update,
+                                frame_detections
+                            )
 
                         stats = await self._store_frame_detections(
                             video.id, frame_detections.frame_number, frame_detections
@@ -304,15 +310,21 @@ class DetectionPipeline:
 
             # Process remaining frames
             if batch_frames:
-                detections_list = detector.detect_batch(
-                    batch_frames, start_frame_number=batch_frame_numbers[0]
+                # Run CPU-intensive detection in thread to avoid blocking event loop
+                detections_list = await asyncio.to_thread(
+                    detector.detect_batch,
+                    batch_frames,
+                    batch_frame_numbers[0]
                 )
 
                 for frame_detections in detections_list:
                     # Use frame_number from FrameDetections (already set by detect_batch)
-                    # Apply tracking if enabled
+                    # Apply tracking if enabled (also CPU-intensive, run in thread)
                     if tracker:
-                        frame_detections = tracker.update(frame_detections)
+                        frame_detections = await asyncio.to_thread(
+                            tracker.update,
+                            frame_detections
+                        )
 
                     stats = await self._store_frame_detections(
                         video.id, frame_detections.frame_number, frame_detections

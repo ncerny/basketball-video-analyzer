@@ -6,6 +6,7 @@ Designed for local-first video processing where jobs are relatively short-lived.
 
 import asyncio
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -100,6 +101,8 @@ class JobManager:
         self._semaphore = asyncio.Semaphore(max_concurrent_jobs)
         self._workers: dict[str, JobWorker] = {}
         self._lock = asyncio.Lock()
+        # Thread pool for CPU-intensive tasks (YOLO, tracking, etc.)
+        self._executor = ThreadPoolExecutor(max_workers=max_concurrent_jobs)
 
     def register_worker(self, job_type: str, worker: JobWorker) -> None:
         """Register a worker function for a job type.
