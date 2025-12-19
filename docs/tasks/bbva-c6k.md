@@ -289,3 +289,44 @@ All fixes implemented and validated. **274 tests pass.**
 - **No regressions introduced**
 - Ready for manual testing with real video to confirm tracking stability
 
+---
+
+## Fix #2: IOU Threshold Too Strict (2025-12-19)
+
+### Problem Found After Re-testing
+
+After re-running detection with the initial fixes, tracking ID churn was still severe:
+- 1,129 unique tracking IDs for ~10 players
+- Max ID grew from 5 to 2,147 over the video
+- ~1 new ID created per sampled frame
+
+### Root Cause Analysis
+
+With `sample_interval=3` on 30fps video, frames are 100ms apart. A basketball player running at typical speed (5m/s) moves 50-100 pixels per frame.
+
+**IOU calculation for 30-pixel horizontal movement:**
+- Original bbox area: 50 × 150 = 7,500 pixels
+- Overlap area after shift: 20 × 150 = 3,000 pixels  
+- Union area: 7,500 + 7,500 - 3,000 = 12,000 pixels
+- **IOU = 3,000 / 12,000 = 0.25**
+
+Our threshold of **0.6** was way too strict. Most legitimate tracking matches were failing, causing constant new track creation.
+
+### Fix Applied
+
+| Parameter | Old Value | New Value | Rationale |
+|-----------|-----------|-----------|-----------|
+| `tracking_iou_threshold` | 0.6 | **0.2** | Allow matching with only 20% overlap for fast motion |
+| `tracking_buffer_seconds` | 2.0 | **5.0** | Keep lost tracks longer for occlusions |
+| `minimum_matching_threshold` (default) | 0.8 | **0.3** | Lower default for basketball use case |
+
+### Files Modified
+
+- `backend/app/services/detection_pipeline.py` - Updated DetectionPipelineConfig defaults
+- `backend/app/ml/byte_tracker.py` - Updated default parameter
+
+### Verification
+
+- All 274 tests pass
+- User needs to re-run detection to validate fix
+

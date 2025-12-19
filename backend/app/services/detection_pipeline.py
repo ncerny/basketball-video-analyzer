@@ -35,8 +35,10 @@ class DetectionPipelineConfig:
     device: str = "cpu"
     delete_existing: bool = True  # Delete existing detections before processing
     enable_tracking: bool = True  # Enable ByteTrack player tracking
-    tracking_buffer_seconds: float = 2.0  # How long to keep lost tracks
-    tracking_iou_threshold: float = 0.6  # IOU threshold for matching
+    tracking_buffer_seconds: float = 5.0  # How long to keep lost tracks (increased for occlusions)
+    tracking_iou_threshold: float = (
+        0.2  # IOU threshold for matching (lowered for fast basketball motion)
+    )
     enable_court_detection: bool = True  # Enable court boundary detection
     court_overlap_threshold: float = 0.2  # Minimum overlap with court to keep detection
 
