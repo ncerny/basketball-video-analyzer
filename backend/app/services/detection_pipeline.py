@@ -4,6 +4,7 @@ Integrates frame extraction, YOLO detection, and database storage
 to process videos and identify players.
 """
 
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
