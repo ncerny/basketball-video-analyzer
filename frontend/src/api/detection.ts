@@ -21,7 +21,10 @@ export const detectionAPI = {
   ): Promise<DetectionJobResponse> {
     const response = await apiClient.post<DetectionJobResponse>(
       `/videos/${videoId}/detect`,
-      request
+      request,
+      {
+        timeout: 120000, // 2 minutes - first call may need to download YOLO model
+      }
     )
     return response.data
   },

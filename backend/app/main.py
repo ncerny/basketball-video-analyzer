@@ -44,6 +44,17 @@ app.include_router(annotations.router, prefix="/api")
 app.include_router(detection.router, prefix="/api")
 
 
+@app.on_event("startup")
+async def startup_event() -> None:
+    """Initialize services on application startup."""
+    from app.services.detection_pipeline import create_detection_job_worker
+    from app.services.job_manager import get_job_manager
+
+    # Register detection worker at startup
+    job_manager = get_job_manager()
+    await create_detection_job_worker(job_manager)
+
+
 @app.get("/")
 async def root() -> dict[str, str]:
     """Root endpoint returning API information."""
