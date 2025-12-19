@@ -27,6 +27,8 @@ import {
   Radio,
   Divider,
   TextInput,
+  Progress,
+  Tooltip,
 } from '@mantine/core';
 import {
   IconUpload,
@@ -43,11 +45,14 @@ import {
   IconCheck,
   IconX,
   IconGripVertical,
+  IconBrain,
+  IconEye,
 } from '@tabler/icons-react';
 import { Navigation } from '../components/Navigation';
 import { VideoSequencer } from '../components/VideoSequencer';
 import { api } from '../services/api';
-import type { Game, Video, GameRoster, Player } from '../types/api';
+import { detectionAPI } from '../api';
+import type { Game, Video, GameRoster, Player, DetectionStats, JobResponse } from '../types/api';
 
 interface RosterPlayerInfo extends GameRoster {
   player: Player;
@@ -72,6 +77,11 @@ export function GameDetail() {
 
   // Edit mode state
   const [editedGame, setEditedGame] = useState<Partial<Game>>({});
+
+  // Detection state
+  const [detectionStats, setDetectionStats] = useState<Record<number, DetectionStats>>({});
+  const [detectionJobs, setDetectionJobs] = useState<Record<number, JobResponse>>({});
+  const [runningDetections, setRunningDetections] = useState<Set<number>>(new Set());
 
   // Check for edit mode from URL parameter
   useEffect(() => {
@@ -129,6 +139,25 @@ export function GameDetail() {
         });
 
         setRoster(enrichedRoster);
+
+        // Load detection stats for all videos
+        const statsPromises = videosData.map(async (video: Video) => {
+          try {
+            const stats = await detectionAPI.getDetectionStats(video.id);
+            return { videoId: video.id, stats };
+          } catch {
+            return null;
+          }
+        });
+
+        const statsResults = await Promise.all(statsPromises);
+        const statsMap: Record<number, DetectionStats> = {};
+        statsResults.forEach(result => {
+          if (result && result.stats.total_detections > 0) {
+            statsMap[result.videoId] = result.stats;
+          }
+        });
+        setDetectionStats(statsMap);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load game data');
       } finally {
@@ -200,6 +229,64 @@ export function GameDetail() {
       setRoster((prev) => prev.filter((r) => r.id !== rosterId));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to remove player from roster');
+    }
+  };
+
+  const handleRunDetection = async (videoId: number) => {
+    try {
+      setRunningDetections(prev => new Set(prev).add(videoId));
+
+      // Start detection job
+      const response = await detectionAPI.startDetection(videoId, {
+        sample_interval: 3,
+        batch_size: 8,
+        confidence_threshold: 0.5,
+      });
+
+      // Poll for job status
+      const jobId = response.job_id;
+      const pollInterval = setInterval(async () => {
+        try {
+          const job = await detectionAPI.getJobStatus(jobId);
+          setDetectionJobs(prev => ({ ...prev, [videoId]: job }));
+
+          if (job.status === 'completed') {
+            clearInterval(pollInterval);
+            setRunningDetections(prev => {
+              const next = new Set(prev);
+              next.delete(videoId);
+              return next;
+            });
+
+            // Load detection stats
+            const stats = await detectionAPI.getDetectionStats(videoId);
+            setDetectionStats(prev => ({ ...prev, [videoId]: stats }));
+          } else if (job.status === 'failed' || job.status === 'cancelled') {
+            clearInterval(pollInterval);
+            setRunningDetections(prev => {
+              const next = new Set(prev);
+              next.delete(videoId);
+              return next;
+            });
+            setError(`Detection ${job.status}: ${job.error || 'Unknown error'}`);
+          }
+        } catch (err) {
+          clearInterval(pollInterval);
+          setRunningDetections(prev => {
+            const next = new Set(prev);
+            next.delete(videoId);
+            return next;
+          });
+          setError(err instanceof Error ? err.message : 'Failed to poll job status');
+        }
+      }, 2000); // Poll every 2 seconds
+    } catch (err) {
+      setRunningDetections(prev => {
+        const next = new Set(prev);
+        next.delete(videoId);
+        return next;
+      });
+      setError(err instanceof Error ? err.message : 'Failed to start detection');
     }
   };
 
@@ -438,65 +525,134 @@ export function GameDetail() {
             </Center>
           ) : (
             <Grid>
-              {videos.map((video) => (
-                <Grid.Col key={video.id} span={{ base: 12, sm: 6, lg: 4 }}>
-                  <Card shadow="sm" withBorder>
-                    <Stack gap="sm">
-                      <Group justify="space-between" align="flex-start">
-                        <div>
-                          <Text size="xs" c="dimmed">Video {video.sequence_order || video.id}</Text>
-                          <Text size="xs" c="dimmed" lineClamp={1} style={{ fontFamily: 'monospace' }}>
-                            {video.file_path.split('/').pop()}
-                          </Text>
-                        </div>
-                        {isEditMode && (
-                          <ActionIcon
-                            color="red"
-                            variant="subtle"
-                            onClick={() => handleDeleteVideo(video.id)}
-                            title="Delete video"
-                          >
-                            <IconTrash size={18} />
-                          </ActionIcon>
-                        )}
-                      </Group>
+              {videos.map((video) => {
+                const stats = detectionStats[video.id];
+                const job = detectionJobs[video.id];
+                const isRunning = runningDetections.has(video.id);
 
-                      <Divider />
+                return (
+                  <Grid.Col key={video.id} span={{ base: 12, sm: 6, lg: 4 }}>
+                    <Card shadow="sm" withBorder>
+                      <Stack gap="sm">
+                        <Group justify="space-between" align="flex-start">
+                          <div>
+                            <Text size="xs" c="dimmed">Video {video.sequence_order || video.id}</Text>
+                            <Text size="xs" c="dimmed" lineClamp={1} style={{ fontFamily: 'monospace' }}>
+                              {video.file_path.split('/').pop()}
+                            </Text>
+                          </div>
+                          {isEditMode && (
+                            <ActionIcon
+                              color="red"
+                              variant="subtle"
+                              onClick={() => handleDeleteVideo(video.id)}
+                              title="Delete video"
+                            >
+                              <IconTrash size={18} />
+                            </ActionIcon>
+                          )}
+                        </Group>
 
-                      <Stack gap="xs">
-                        <Group justify="space-between">
-                          <Group gap="xs">
-                            <IconClock size={16} />
-                            <Text size="sm" c="dimmed">Duration</Text>
+                        <Divider />
+
+                        <Stack gap="xs">
+                          <Group justify="space-between">
+                            <Group gap="xs">
+                              <IconClock size={16} />
+                              <Text size="sm" c="dimmed">Duration</Text>
+                            </Group>
+                            <Text size="sm">{formatDuration(video.duration_seconds)}</Text>
                           </Group>
-                          <Text size="sm">{formatDuration(video.duration_seconds)}</Text>
-                        </Group>
 
-                        <Group justify="space-between">
-                          <Text size="sm" c="dimmed">Resolution</Text>
-                          <Text size="sm">{video.resolution}</Text>
-                        </Group>
+                          <Group justify="space-between">
+                            <Text size="sm" c="dimmed">Resolution</Text>
+                            <Text size="sm">{video.resolution}</Text>
+                          </Group>
 
-                        <Group justify="space-between">
-                          <Text size="sm" c="dimmed">Status</Text>
-                          <Badge
-                            color={
-                              video.processing_status === 'completed'
-                                ? 'green'
-                                : video.processing_status === 'failed'
-                                ? 'red'
-                                : 'yellow'
-                            }
-                            variant="light"
-                          >
-                            {video.processing_status}
-                          </Badge>
+                          <Group justify="space-between">
+                            <Text size="sm" c="dimmed">Status</Text>
+                            <Badge
+                              color={
+                                video.processing_status === 'completed'
+                                  ? 'green'
+                                  : video.processing_status === 'failed'
+                                  ? 'red'
+                                  : 'yellow'
+                              }
+                              variant="light"
+                            >
+                              {video.processing_status}
+                            </Badge>
+                          </Group>
+
+                          {/* Detection stats */}
+                          {stats && (
+                            <>
+                              <Divider />
+                              <Group justify="space-between">
+                                <Text size="sm" c="dimmed">Detections</Text>
+                                <Badge color="blue" variant="light">
+                                  {stats.total_detections.toLocaleString()}
+                                </Badge>
+                              </Group>
+                              <Group justify="space-between">
+                                <Text size="xs" c="dimmed">Frames</Text>
+                                <Text size="xs">{stats.frames_with_detections}</Text>
+                              </Group>
+                            </>
+                          )}
+
+                          {/* Detection job progress */}
+                          {isRunning && job && (
+                            <>
+                              <Divider />
+                              <Stack gap={4}>
+                                <Group justify="space-between">
+                                  <Text size="xs" c="dimmed">{job.progress.message}</Text>
+                                  <Text size="xs" fw={600}>{Math.round(job.progress.percentage)}%</Text>
+                                </Group>
+                                <Progress value={job.progress.percentage} size="sm" animated />
+                              </Stack>
+                            </>
+                          )}
+                        </Stack>
+
+                        <Divider />
+
+                        {/* Action buttons */}
+                        <Group gap="xs">
+                          <Tooltip label="Run player detection" withArrow>
+                            <Button
+                              variant="light"
+                              size="xs"
+                              leftSection={<IconBrain size={16} />}
+                              onClick={() => handleRunDetection(video.id)}
+                              disabled={isRunning}
+                              loading={isRunning}
+                              flex={1}
+                            >
+                              {stats ? 'Re-run' : 'Detect'}
+                            </Button>
+                          </Tooltip>
+                          {stats && (
+                            <Tooltip label="View detections" withArrow>
+                              <ActionIcon
+                                variant="light"
+                                size="lg"
+                                color="blue"
+                                component={Link}
+                                to={`/analysis?gameId=${gameId}`}
+                              >
+                                <IconEye size={18} />
+                              </ActionIcon>
+                            </Tooltip>
+                          )}
                         </Group>
                       </Stack>
-                    </Stack>
-                  </Card>
-                </Grid.Col>
-              ))}
+                    </Card>
+                  </Grid.Col>
+                );
+              })}
             </Grid>
           )}
 
