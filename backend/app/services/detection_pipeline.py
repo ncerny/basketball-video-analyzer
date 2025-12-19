@@ -15,6 +15,7 @@ from sqlalchemy.future import select
 
 from app.config import settings
 from app.ml.byte_tracker import PlayerTracker
+from app.ml.court_detector import CourtDetector
 from app.ml.types import Detection, FrameDetections
 from app.ml.yolo_detector import YOLODetector
 from app.models.detection import PlayerDetection
@@ -34,6 +35,8 @@ class DetectionPipelineConfig:
     enable_tracking: bool = True  # Enable ByteTrack player tracking
     tracking_buffer_seconds: float = 1.0  # How long to keep lost tracks
     tracking_iou_threshold: float = 0.8  # IOU threshold for matching
+    enable_court_detection: bool = True  # Enable court boundary detection
+    court_overlap_threshold: float = 0.3  # Minimum overlap with court to keep detection
 
 
 @dataclass
@@ -77,6 +80,7 @@ class DetectionPipeline:
         )
         self._detector: YOLODetector | None = None
         self._tracker: PlayerTracker | None = None
+        self._court_detector: CourtDetector | None = None
         self._video_storage_path = Path(settings.video_storage_path)
 
     @staticmethod
@@ -126,6 +130,16 @@ class DetectionPipeline:
                 frame_rate=int(fps),
             )
         return self._tracker
+
+    def _get_court_detector(self) -> CourtDetector:
+        """Get or create court detector instance.
+
+        Returns:
+            CourtDetector instance for detecting court boundaries.
+        """
+        if self._court_detector is None:
+            self._court_detector = CourtDetector()
+        return self._court_detector
 
     async def process_video(
         self,
@@ -254,6 +268,9 @@ class DetectionPipeline:
             # Initialize tracker if enabled
             tracker = self._get_tracker(metadata.fps) if self._config.enable_tracking else None
 
+            # Initialize court detector if enabled
+            court_detector = self._get_court_detector() if self._config.enable_court_detection else None
+
             # Calculate total frames to process
             total_sampled_frames = extractor.count_sampled_frames(
                 sample_interval=self._config.sample_interval
@@ -280,9 +297,20 @@ class DetectionPipeline:
                         batch_frame_numbers[0]
                     )
 
-                    # Apply tracking and store detections
-                    for frame_detections in detections_list:
+                    # Apply court detection and tracking
+                    for i, frame_detections in enumerate(detections_list):
                         # Use frame_number from FrameDetections (already set by detect_batch)
+
+                        # Filter detections based on court boundaries (CPU-intensive, run in thread)
+                        if court_detector:
+                            frame = batch_frames[i]
+                            frame_detections = await asyncio.to_thread(
+                                self._filter_detections_by_court,
+                                frame_detections,
+                                frame,
+                                court_detector
+                            )
+
                         # Apply tracking if enabled (also CPU-intensive, run in thread)
                         if tracker:
                             frame_detections = await asyncio.to_thread(
@@ -318,8 +346,19 @@ class DetectionPipeline:
                     batch_frame_numbers[0]
                 )
 
-                for frame_detections in detections_list:
+                for i, frame_detections in enumerate(detections_list):
                     # Use frame_number from FrameDetections (already set by detect_batch)
+
+                    # Filter detections based on court boundaries (CPU-intensive, run in thread)
+                    if court_detector:
+                        frame = batch_frames[i]
+                        frame_detections = await asyncio.to_thread(
+                            self._filter_detections_by_court,
+                            frame_detections,
+                            frame,
+                            court_detector
+                        )
+
                     # Apply tracking if enabled (also CPU-intensive, run in thread)
                     if tracker:
                         frame_detections = await asyncio.to_thread(
@@ -348,6 +387,49 @@ class DetectionPipeline:
             total_detections=total_detections,
             persons_detected=persons_detected,
             balls_detected=balls_detected,
+        )
+
+    def _filter_detections_by_court(
+        self,
+        frame_detections: FrameDetections,
+        frame: Any,
+        court_detector: CourtDetector,
+    ) -> FrameDetections:
+        """Filter detections to only include those within court boundaries.
+
+        Args:
+            frame_detections: All detections from YOLO.
+            frame: The video frame (numpy array).
+            court_detector: Court detector instance.
+
+        Returns:
+            Filtered FrameDetections with only in-court detections.
+        """
+        # Detect court mask for this frame
+        court_mask = court_detector.detect_court_mask(frame)
+
+        # Filter detections
+        filtered_detections = []
+        for detection in frame_detections.detections:
+            # Check if bounding box overlaps with court
+            is_in_court = court_detector.is_bbox_in_court(
+                bbox_x=detection.bbox.x,
+                bbox_y=detection.bbox.y,
+                bbox_width=detection.bbox.width,
+                bbox_height=detection.bbox.height,
+                mask=court_mask,
+                threshold=self._config.court_overlap_threshold,
+            )
+
+            if is_in_court:
+                filtered_detections.append(detection)
+
+        # Return new FrameDetections with filtered list
+        return FrameDetections(
+            frame_number=frame_detections.frame_number,
+            detections=filtered_detections,
+            frame_width=frame_detections.frame_width,
+            frame_height=frame_detections.frame_height,
         )
 
     async def _store_frame_detections(
