@@ -8,7 +8,7 @@
  * - Frame-by-frame navigation
  */
 
-import { useMemo, useState, useCallback } from 'react';
+import { useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import {
   ActionIcon,
   Box,
@@ -17,10 +17,13 @@ import {
   Menu,
   Paper,
   Stack,
+  Switch,
   Text,
   Tooltip,
 } from '@mantine/core';
 import {
+  IconEye,
+  IconEyeOff,
   IconGauge,
   IconPlayerPause,
   IconPlayerPlay,
@@ -32,8 +35,11 @@ import {
 import { useTimelineStore } from '../store/timelineStore';
 import { MultiVideoPlayer } from './MultiVideoPlayer';
 import { VideoProgressBar } from './VideoProgressBar';
+import { DetectionOverlay } from './DetectionOverlay';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
+import { detectionAPI } from '../api';
 import type { Video } from '../types/timeline';
+import type { Detection } from '../types/api';
 
 interface GameTimelinePlayerProps {
   /** CSS class name for the container */
@@ -74,12 +80,33 @@ export const GameTimelinePlayer: React.FC<GameTimelinePlayerProps> = ({
   // Local state for tracking current video and gap status
   const [currentVideo, setCurrentVideo] = useState<Video | null>(null);
   const [isInGap, setIsInGap] = useState(false);
-  
+
+  // Detection overlay state
+  const [showDetections, setShowDetections] = useState(false);
+  const [detections, setDetections] = useState<Detection[]>([]);
+  const [videoElement, setVideoElement] = useState<HTMLVideoElement | null>(null);
+  const [currentFrame, setCurrentFrame] = useState(0);
+  const videoContainerRef = useRef<HTMLDivElement | null>(null);
+
   // Handle video change from MultiVideoPlayer
   const handleVideoChange = useCallback((video: Video | null) => {
     setCurrentVideo(video);
     onVideoChange?.(video);
-  }, [onVideoChange]);
+
+    // Load detections when video changes
+    if (video && showDetections) {
+      detectionAPI.getVideoDetections(video.id, { limit: 10000 })
+        .then(response => {
+          setDetections(response.detections);
+        })
+        .catch(err => {
+          console.error('Failed to load detections:', err);
+          setDetections([]);
+        });
+    } else {
+      setDetections([]);
+    }
+  }, [onVideoChange, showDetections]);
 
   // Check gap status from store
   const videoTimeResult = getCurrentVideoTime();
@@ -87,6 +114,45 @@ export const GameTimelinePlayer: React.FC<GameTimelinePlayerProps> = ({
     setIsInGap(videoTimeResult.isInGap);
     onGapChange?.(videoTimeResult.isInGap);
   }
+
+  // Update current frame when video time changes
+  useEffect(() => {
+    if (!videoElement || !currentVideo) return;
+
+    const updateFrame = () => {
+      const fps = currentVideo.fps || 30;
+      const frame = Math.floor(videoElement.currentTime * fps);
+      setCurrentFrame(frame);
+    };
+
+    // Update on time update
+    videoElement.addEventListener('timeupdate', updateFrame);
+    updateFrame(); // Initial update
+
+    return () => {
+      videoElement.removeEventListener('timeupdate', updateFrame);
+    };
+  }, [videoElement, currentVideo]);
+
+  // Toggle detection overlay
+  const toggleDetections = useCallback(() => {
+    const newValue = !showDetections;
+    setShowDetections(newValue);
+
+    // Load detections if turning on and we have a video
+    if (newValue && currentVideo) {
+      detectionAPI.getVideoDetections(currentVideo.id, { limit: 10000 })
+        .then(response => {
+          setDetections(response.detections);
+        })
+        .catch(err => {
+          console.error('Failed to load detections:', err);
+          setDetections([]);
+        });
+    } else if (!newValue) {
+      setDetections([]);
+    }
+  }, [showDetections, currentVideo]);
 
   // Calculate total duration
   const totalDuration = useMemo(
@@ -159,9 +225,25 @@ export const GameTimelinePlayer: React.FC<GameTimelinePlayerProps> = ({
         <Box style={{ width: '100%', aspectRatio: '16/9', position: 'relative', backgroundColor: 'black' }}>
           <MultiVideoPlayer
             onVideoChange={handleVideoChange}
+            onVideoElementChange={setVideoElement}
+            containerRefCallback={(ref) => { videoContainerRef.current = ref; }}
             showBuffering={true}
             showGapIndicator={true}
           />
+
+          {/* Detection overlay */}
+          {videoElement && videoContainerRef.current && (
+            <DetectionOverlay
+              videoElement={videoElement}
+              detections={detections}
+              currentFrame={currentFrame}
+              visible={showDetections}
+              minConfidence={0.5}
+              showConfidence={true}
+              showTrackingId={true}
+              containerRef={videoContainerRef}
+            />
+          )}
         </Box>
 
         {/* Current video progress bar with seeking */}
@@ -173,6 +255,18 @@ export const GameTimelinePlayer: React.FC<GameTimelinePlayerProps> = ({
 
         <Group justify="space-between" align="center">
           <Group gap="xs">
+            {/* Detection toggle */}
+            <Tooltip label={showDetections ? 'Hide detections' : 'Show detections'} withArrow>
+              <Switch
+                checked={showDetections}
+                onChange={toggleDetections}
+                size="md"
+                onLabel={<IconEye size={16} />}
+                offLabel={<IconEyeOff size={16} />}
+                color="blue"
+              />
+            </Tooltip>
+
             <Tooltip label="Skip back 10s" withArrow>
               <ActionIcon
                 variant="light"

@@ -17,6 +17,12 @@ interface MultiVideoPlayerProps {
   /** Callback when video changes */
   onVideoChange?: (video: Video | null) => void;
 
+  /** Callback when video element changes */
+  onVideoElementChange?: (element: HTMLVideoElement | null) => void;
+
+  /** Ref to the video container element */
+  containerRefCallback?: (ref: HTMLDivElement | null) => void;
+
   /** Show buffering indicator */
   showBuffering?: boolean;
 
@@ -30,6 +36,8 @@ interface MultiVideoPlayerProps {
 export const MultiVideoPlayer: React.FC<MultiVideoPlayerProps> = ({
   className = '',
   onVideoChange,
+  onVideoElementChange,
+  containerRefCallback,
   showBuffering = true,
   showGapIndicator = true,
 }) => {
@@ -50,6 +58,16 @@ export const MultiVideoPlayer: React.FC<MultiVideoPlayerProps> = ({
       onVideoChange?.(video);
     },
   });
+
+  // Notify parent when video element changes
+  useEffect(() => {
+    onVideoElementChange?.(currentVideoElement);
+  }, [currentVideoElement, onVideoElementChange]);
+
+  // Provide container ref to parent
+  useEffect(() => {
+    containerRefCallback?.(containerRef.current);
+  }, [containerRefCallback]);
 
   // Find any annotation that overlaps with the current gap
   // An annotation overlaps if it starts before the gap ends AND ends after the gap starts

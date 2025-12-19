@@ -215,3 +215,70 @@ export interface ErrorResponse {
   code?: string
   details?: unknown
 }
+
+// Detection types
+export interface BoundingBox {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface Detection {
+  id: number
+  video_id: number
+  frame_number: number
+  player_id: number | null
+  bbox: BoundingBox
+  tracking_id: number
+  confidence_score: number
+}
+
+export interface VideoDetectionsResponse {
+  video_id: number
+  total_detections: number
+  detections: Detection[]
+  frames_with_detections: number
+}
+
+export interface DetectionJobRequest {
+  sample_interval?: number
+  batch_size?: number
+  confidence_threshold?: number
+}
+
+export interface DetectionJobResponse {
+  job_id: string
+  video_id: number
+  message: string
+}
+
+export interface JobProgress {
+  current: number
+  total: number
+  percentage: number
+  message: string
+}
+
+export interface JobResponse {
+  id: string
+  job_type: string
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled'
+  progress: JobProgress
+  result: Record<string, unknown> | null
+  error: string | null
+  created_at: string
+  started_at: string | null
+  completed_at: string | null
+  metadata: Record<string, unknown>
+}
+
+export interface DetectionStats {
+  video_id: number
+  total_frames_processed: number
+  total_detections: number
+  persons_detected: number
+  balls_detected: number
+  frames_with_detections: number
+  avg_detections_per_frame: number
+}

@@ -224,7 +224,7 @@ describe('GameTimelinePlayer', () => {
   })
 
   it('passes annotations to timeline bar', () => {
-    render(<GameTimelinePlayer showAnnotations={true} />)
+    render(<GameTimelinePlayer />)
 
     expect(screen.getByTestId('annotation-count')).toHaveTextContent('1')
   })
