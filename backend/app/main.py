@@ -49,10 +49,11 @@ async def startup_event() -> None:
     """Initialize services on application startup."""
     from app.services.detection_pipeline import create_detection_job_worker
     from app.services.job_manager import get_job_manager
+    import asyncio
 
-    # Register detection worker at startup
+    # Register detection worker in background (don't block startup)
     job_manager = get_job_manager()
-    await create_detection_job_worker(job_manager)
+    asyncio.create_task(create_detection_job_worker(job_manager))
 
 
 @app.get("/")
