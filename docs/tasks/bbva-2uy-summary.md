@@ -4,7 +4,7 @@
 
 ## Current Status
 
-**NOT STARTED** - Design complete, ready for implementation.
+**IN PROGRESS** - Core infrastructure complete, integration pending.
 
 ## Problem
 
@@ -22,13 +22,24 @@ Batch 2: Detect frames 30-59 → write to DB → OCR batch 2 → write to DB
 ...
 ```
 
-## Key Components to Build
+## Completed
 
-1. `ProcessingBatch` model + migration
-2. `DetectionBatchProcessor` class
-3. `OCRBatchProcessor` class
-4. `SequentialOrchestrator` class
-5. Resume logic (query incomplete batches, skip completed)
+| Component | File | Status |
+|-----------|------|--------|
+| ProcessingBatch model | `backend/app/models/processing_batch.py` | Done |
+| Migration | `backend/alembic/versions/96312ae6fc68_*.py` | Done |
+| DetectionBatchProcessor | `backend/app/services/batch_processor.py` | Done |
+| OCRBatchProcessor | `backend/app/services/batch_processor.py` | Done |
+| SequentialOrchestrator | `backend/app/services/batch_orchestrator.py` | Done |
+| Resume logic | In orchestrator | Done |
+| Config settings | `backend/app/config.py` | Done |
+
+## Remaining
+
+1. Refactor `detection_pipeline.py` to use orchestrator (or create parallel path)
+2. Update job worker to use new orchestrator
+3. Write unit tests for batch processors
+4. Test resume/interrupt scenarios
 
 ## Files to Create/Modify
 
@@ -46,20 +57,24 @@ Batch 2: Detect frames 30-59 → write to DB → OCR batch 2 → write to DB
 ```
 Continue work on basketball-video-analyzer batch pipeline (bbva-2uy).
 
-GOAL: Refactor detection/OCR into batch-based processors with checkpointing.
+STATUS: Core infrastructure COMPLETE. Integration pending.
 
-DESIGN: See docs/tasks/bbva-2uy.md and docs/implementation-plan.md section 2.4
+COMPLETED:
+- ProcessingBatch model + migration (applied)
+- DetectionBatchProcessor and OCRBatchProcessor in batch_processor.py
+- SequentialOrchestrator in batch_orchestrator.py with resume logic
+- Config settings added
 
-CURRENT STACK (unchanged):
-- Detection: RF-DETR
-- Tracking: Norfair  
-- OCR: SmolVLM2
+REMAINING:
+1. Wire orchestrator into job system (update detection_pipeline.py or job worker)
+2. Write unit tests for new batch processors
+3. Test resume/interrupt scenarios
 
-NEXT STEPS:
-1. Create ProcessingBatch model
-2. Create migration
-3. Implement DetectionBatchProcessor
-4. Implement OCRBatchProcessor
-5. Implement SequentialOrchestrator
-6. Refactor detection_pipeline.py to use orchestrator
+KEY FILES:
+- backend/app/services/batch_processor.py
+- backend/app/services/batch_orchestrator.py
+- backend/app/models/processing_batch.py
+- backend/app/services/detection_pipeline.py (needs update)
+
+All 34 detection tests still pass.
 ```

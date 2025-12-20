@@ -39,8 +39,13 @@ class Settings(BaseSettings):
 
     # OCR settings
     enable_jersey_ocr: bool = True
-    ocr_sample_rate: int = 10  # Run OCR every Nth frame per tracking_id
+    ocr_sample_rate: int = 10
     ocr_model_name: str = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
+
+    # Batch processing settings
+    batch_frames_per_batch: int = 30
+    batch_sample_interval: int = 3
+    batch_execution_mode: Literal["sequential", "pipeline", "distributed"] = "sequential"
 
     @property
     def models_dir(self) -> Path:

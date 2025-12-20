@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from app.models.detection import PlayerDetection
     from app.models.game import Game
     from app.models.jersey_number import JerseyNumber
+    from app.models.processing_batch import ProcessingBatch
 
 
 class ProcessingStatus(str, enum.Enum):
@@ -64,6 +65,9 @@ class Video(Base):
     )
     jersey_numbers: Mapped[list["JerseyNumber"]] = relationship(
         "JerseyNumber", back_populates="video", cascade="all, delete-orphan"
+    )
+    processing_batches: Mapped[list["ProcessingBatch"]] = relationship(
+        "ProcessingBatch", back_populates="video", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:
