@@ -421,3 +421,125 @@ class TestStoreFrameDetections:
 
         assert stats["total"] == 0
         assert mock_db.add.call_count == 0
+
+
+class TestOCRIntegration:
+    @pytest.fixture
+    def mock_db(self):
+        db = MagicMock(spec=AsyncSession)
+        db.add = MagicMock()
+        return db
+
+    def test_ocr_sampling_logic(self, mock_db):
+        config = DetectionPipelineConfig(ocr_sample_rate=5)
+        pipeline = DetectionPipeline(mock_db, config)
+
+        results = []
+        for _ in range(15):
+            results.append(pipeline._should_run_ocr_for_track(1))
+
+        assert results == [
+            True,
+            False,
+            False,
+            False,
+            False,
+            True,
+            False,
+            False,
+            False,
+            False,
+            True,
+            False,
+            False,
+            False,
+            False,
+        ]
+
+    def test_ocr_sampling_per_track(self, mock_db):
+        config = DetectionPipelineConfig(ocr_sample_rate=3)
+        pipeline = DetectionPipeline(mock_db, config)
+
+        track1_results = [pipeline._should_run_ocr_for_track(1) for _ in range(6)]
+        track2_results = [pipeline._should_run_ocr_for_track(2) for _ in range(6)]
+
+        assert track1_results == [True, False, False, True, False, False]
+        assert track2_results == [True, False, False, True, False, False]
+
+    def test_reset_ocr_state(self, mock_db):
+        config = DetectionPipelineConfig(ocr_sample_rate=3)
+        pipeline = DetectionPipeline(mock_db, config)
+
+        pipeline._should_run_ocr_for_track(1)
+        pipeline._should_run_ocr_for_track(1)
+        assert pipeline._should_run_ocr_for_track(1) is False
+
+        pipeline._reset_ocr_state()
+        assert pipeline._should_run_ocr_for_track(1) is True
+
+    @pytest.mark.asyncio
+    async def test_run_ocr_disabled(self, mock_db):
+        config = DetectionPipelineConfig(enable_jersey_ocr=False)
+        pipeline = DetectionPipeline(mock_db, config)
+
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        detections = FrameDetections(
+            frame_number=0,
+            detections=[
+                Detection(
+                    bbox=BoundingBox(x=100, y=100, width=80, height=200),
+                    confidence=0.9,
+                    class_id=0,
+                    class_name="person",
+                    tracking_id=1,
+                )
+            ],
+        )
+
+        count = await pipeline._run_ocr_on_frame(1, 0, frame, detections)
+        assert count == 0
+        assert mock_db.add.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_run_ocr_skips_non_person(self, mock_db):
+        config = DetectionPipelineConfig(enable_jersey_ocr=True)
+        pipeline = DetectionPipeline(mock_db, config)
+
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        detections = FrameDetections(
+            frame_number=0,
+            detections=[
+                Detection(
+                    bbox=BoundingBox(x=100, y=100, width=30, height=30),
+                    confidence=0.9,
+                    class_id=32,
+                    class_name="sports_ball",
+                    tracking_id=1,
+                )
+            ],
+        )
+
+        count = await pipeline._run_ocr_on_frame(1, 0, frame, detections)
+        assert count == 0
+
+    @pytest.mark.asyncio
+    async def test_run_ocr_skips_no_tracking_id(self, mock_db):
+        config = DetectionPipelineConfig(enable_jersey_ocr=True)
+        pipeline = DetectionPipeline(mock_db, config)
+
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        detections = FrameDetections(
+            frame_number=0,
+            detections=[
+                Detection(
+                    bbox=BoundingBox(x=100, y=100, width=80, height=200),
+                    confidence=0.9,
+                    class_id=0,
+                    class_name="person",
+                    tracking_id=None,
+                )
+            ],
+        )
+
+        count = await pipeline._run_ocr_on_frame(1, 0, frame, detections)
+        assert count == 0

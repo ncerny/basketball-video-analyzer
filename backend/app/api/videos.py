@@ -292,7 +292,10 @@ async def generate_thumbnail(
     db: Annotated[AsyncSession, Depends(get_db)],
     timestamp: Annotated[
         float | None,
-        Query(ge=0, description="Timestamp in seconds to extract frame from (default: middle of video)"),
+        Query(
+            ge=0,
+            description="Timestamp in seconds to extract frame from (default: middle of video)",
+        ),
     ] = None,
 ) -> Video:
     """Generate a thumbnail for a video.
@@ -378,3 +381,81 @@ async def get_thumbnail(
         media_type="image/jpeg",
         filename=f"video_{video_id}_thumbnail.jpg",
     )
+
+
+@router.get("/{video_id}/jersey-numbers", response_model="JerseyNumberReadingList")
+async def get_jersey_numbers(
+    video_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    tracking_id: Annotated[int | None, Query(description="Filter by tracking ID")] = None,
+    valid_only: Annotated[bool, Query(description="Only return valid readings")] = False,
+) -> dict:
+    from app.models.jersey_number import JerseyNumber as JerseyNumberModel
+    from app.schemas.video import JerseyNumberReading
+
+    stmt = select(VideoModel).where(VideoModel.id == video_id)
+    result = await db.execute(stmt)
+    video = result.scalar_one_or_none()
+
+    if not video:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Video with id {video_id} not found",
+        )
+
+    query = select(JerseyNumberModel).where(JerseyNumberModel.video_id == video_id)
+
+    if tracking_id is not None:
+        query = query.where(JerseyNumberModel.tracking_id == tracking_id)
+    if valid_only:
+        query = query.where(JerseyNumberModel.is_valid == True)
+
+    query = query.order_by(JerseyNumberModel.frame_number)
+
+    result = await db.execute(query)
+    readings = result.scalars().all()
+
+    return {
+        "video_id": video_id,
+        "readings": [JerseyNumberReading.model_validate(r) for r in readings],
+        "total": len(readings),
+    }
+
+
+@router.get("/{video_id}/jersey-numbers/by-track", response_model="JerseyNumbersByTrack")
+async def get_jersey_numbers_by_track(
+    video_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    from app.services.jersey_aggregator import aggregate_jersey_numbers
+    from app.schemas.video import AggregatedJerseyNumber
+
+    stmt = select(VideoModel).where(VideoModel.id == video_id)
+    result = await db.execute(stmt)
+    video = result.scalar_one_or_none()
+
+    if not video:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Video with id {video_id} not found",
+        )
+
+    agg_result = await aggregate_jersey_numbers(db, video_id)
+
+    return {
+        "video_id": video_id,
+        "tracks": [
+            AggregatedJerseyNumber(
+                tracking_id=a.tracking_id,
+                jersey_number=a.jersey_number,
+                confidence=a.confidence,
+                total_readings=a.total_readings,
+                valid_readings=a.valid_readings,
+                has_conflict=a.has_conflict,
+                all_numbers=a.all_numbers,
+            )
+            for a in agg_result.aggregated
+        ],
+        "total_tracks": agg_result.total_tracks,
+        "tracks_with_numbers": agg_result.tracks_with_numbers,
+    }

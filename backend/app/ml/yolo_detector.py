@@ -1,5 +1,6 @@
 """YOLOv8 detector implementation for player detection."""
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,8 @@ from ultralytics import YOLO
 
 from .base import BaseDetector
 from .types import BoundingBox, Detection, DetectionClass, FrameDetections
+
+logger = logging.getLogger(__name__)
 
 
 class YOLODetector(BaseDetector):
@@ -49,10 +52,32 @@ class YOLODetector(BaseDetector):
     def _load_model(self) -> None:
         """Load the YOLO model if not already loaded."""
         if self._model is None:
+            logger.info(f"Loading YOLO model '{self._model_path}' on device: {self._device}")
             model = YOLO(self._model_path)
             # Set device for inference
             model.to(self._device)
             self._model = model
+
+            # Verify model is on correct device
+            if hasattr(model, 'model') and model.model is not None:
+                try:
+                    first_param = next(model.model.parameters())
+                    actual_device = str(first_param.device)
+                    logger.info(f"YOLO model loaded successfully - requested: {self._device}, actual: {actual_device}")
+
+                    # Check MPS memory if using MPS
+                    if self._device == 'mps':
+                        try:
+                            import torch
+                            if hasattr(torch.mps, 'current_allocated_memory'):
+                                allocated_mb = torch.mps.current_allocated_memory() / (1024 ** 2)
+                                logger.info(f"MPS memory allocated: {allocated_mb:.2f} MB")
+                        except Exception as e:
+                            logger.warning(f"Could not check MPS memory: {e}")
+                except Exception as e:
+                    logger.warning(f"Could not verify model device: {e}")
+            else:
+                logger.info(f"YOLO model loaded successfully on {self._device}")
 
     def is_loaded(self) -> bool:
         """Check if the model is loaded and ready for inference."""
@@ -127,6 +152,10 @@ class YOLODetector(BaseDetector):
 
         if not frames:
             return []
+
+        # Log device info for first batch only
+        if start_frame_number == 0:
+            logger.info(f"Starting batch inference on device: {self._device}")
 
         # Run batch inference
         results = self._model.predict(

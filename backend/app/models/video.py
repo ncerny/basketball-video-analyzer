@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from app.models.annotation_video import AnnotationVideo
     from app.models.detection import PlayerDetection
     from app.models.game import Game
+    from app.models.jersey_number import JerseyNumber
 
 
 class ProcessingStatus(str, enum.Enum):
@@ -40,18 +41,14 @@ class Video(Base):
     duration_seconds: Mapped[float] = mapped_column(Float)
     fps: Mapped[float] = mapped_column(Float)
     resolution: Mapped[str] = mapped_column(String(50))  # e.g., "1920x1080"
-    upload_date: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
-    )
+    upload_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     processed: Mapped[bool] = mapped_column(default=False)
     processing_status: Mapped[ProcessingStatus] = mapped_column(
         Enum(ProcessingStatus), default=ProcessingStatus.PENDING
     )
 
     # Timeline synchronization fields (nullable until determined)
-    recorded_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    recorded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     sequence_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
     game_time_offset: Mapped[float | None] = mapped_column(
         Float, nullable=True
@@ -64,6 +61,9 @@ class Video(Base):
     )
     player_detections: Mapped[list["PlayerDetection"]] = relationship(
         "PlayerDetection", back_populates="video", cascade="all, delete-orphan"
+    )
+    jersey_numbers: Mapped[list["JerseyNumber"]] = relationship(
+        "JerseyNumber", back_populates="video", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:

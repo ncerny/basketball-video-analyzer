@@ -1,5 +1,8 @@
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
+
+import numpy as np
 
 
 class DetectionClass(Enum):
@@ -41,6 +44,7 @@ class Detection:
     class_id: int
     class_name: str
     tracking_id: int | None = None
+    color_hist: np.ndarray | None = None
 
     @property
     def is_person(self) -> bool:

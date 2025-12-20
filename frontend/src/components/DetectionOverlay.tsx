@@ -1,38 +1,18 @@
-/**
- * Detection Overlay Component
- *
- * Displays ML detection bounding boxes over the video player.
- * Shows player detections with tracking IDs and confidence scores.
- */
-
 import { useEffect, useState, useMemo } from 'react'
 import { Box, Text } from '@mantine/core'
 import type { Detection } from '../types/api'
+import type { AggregatedJerseyNumber } from '../api/jerseyNumbers'
 
 interface DetectionOverlayProps {
-  /** Video element to overlay detections on */
   videoElement: HTMLVideoElement | null
-
-  /** All detections for the video */
   detections: Detection[]
-
-  /** Current frame number (calculated from video.currentTime * fps) */
   currentFrame: number
-
-  /** Show/hide the overlay */
   visible?: boolean
-
-  /** Minimum confidence threshold to display */
   minConfidence?: number
-
-  /** Show confidence scores on boxes */
   showConfidence?: boolean
-
-  /** Show tracking IDs on boxes */
   showTrackingId?: boolean
-
-  /** Container ref for positioning */
   containerRef: React.RefObject<HTMLDivElement | null>
+  jerseyNumbers?: Map<number, AggregatedJerseyNumber>
 }
 
 // Generate consistent color for tracking ID
@@ -61,14 +41,24 @@ export const DetectionOverlay: React.FC<DetectionOverlayProps> = ({
   showConfidence = true,
   showTrackingId = true,
   containerRef,
+  jerseyNumbers,
 }) => {
   const [videoDimensions, setVideoDimensions] = useState({ width: 0, height: 0 })
   const [containerDimensions, setContainerDimensions] = useState({ width: 0, height: 0 })
 
-  // Get current frame detections
+  // Nearest-frame matching: detections only exist on sampled frames, not every frame
   const currentDetections = useMemo(() => {
+    if (detections.length === 0) return []
+    
+    const availableFrames = [...new Set(detections.map(d => d.frame_number))].sort((a, b) => a - b)
+    if (availableFrames.length === 0) return []
+    
+    const nearestFrame = availableFrames.reduce((prev, curr) => 
+      Math.abs(curr - currentFrame) < Math.abs(prev - currentFrame) ? curr : prev
+    , availableFrames[0])
+    
     return detections.filter(
-      d => d.frame_number === currentFrame && d.confidence_score >= minConfidence
+      d => d.frame_number === nearestFrame && d.confidence_score >= minConfidence
     )
   }, [detections, currentFrame, minConfidence])
 
@@ -177,10 +167,12 @@ export const DetectionOverlay: React.FC<DetectionOverlayProps> = ({
           const width = detection.bbox.width * scaleX
           const height = detection.bbox.height * scaleY
           const color = getTrackingColor(detection.tracking_id)
+          const jerseyInfo = jerseyNumbers?.get(detection.tracking_id)
+          const hasJerseyNumber = jerseyInfo?.jersey_number != null
+          const hasConflict = jerseyInfo?.has_conflict ?? false
 
           return (
             <g key={detection.id}>
-              {/* Bounding box */}
               <rect
                 x={x}
                 y={y}
@@ -192,7 +184,42 @@ export const DetectionOverlay: React.FC<DetectionOverlayProps> = ({
                 opacity={0.8}
               />
 
-              {/* Label background */}
+              {hasJerseyNumber && (
+                <>
+                  <rect
+                    x={x + width - 28}
+                    y={y - 22}
+                    width={28}
+                    height={20}
+                    rx={4}
+                    fill={hasConflict ? '#f59e0b' : '#1a1b1e'}
+                    opacity={0.9}
+                  />
+                  <text
+                    x={x + width - 14}
+                    y={y - 8}
+                    fill="white"
+                    fontSize="13"
+                    fontWeight="bold"
+                    fontFamily="monospace"
+                    textAnchor="middle"
+                  >
+                    {jerseyInfo.jersey_number}
+                  </text>
+                  {hasConflict && (
+                    <text
+                      x={x + width - 32}
+                      y={y - 8}
+                      fill="#f59e0b"
+                      fontSize="11"
+                      fontWeight="bold"
+                    >
+                      !
+                    </text>
+                  )}
+                </>
+              )}
+
               <rect
                 x={x}
                 y={y - 20}
@@ -202,7 +229,6 @@ export const DetectionOverlay: React.FC<DetectionOverlayProps> = ({
                 opacity={0.8}
               />
 
-              {/* Tracking ID and confidence */}
               <text
                 x={x + 4}
                 y={y - 6}
@@ -216,7 +242,6 @@ export const DetectionOverlay: React.FC<DetectionOverlayProps> = ({
                   ` ${Math.round(detection.confidence_score * 100)}%`}
               </text>
 
-              {/* Player ID if assigned */}
               {detection.player_id && (
                 <>
                   <rect

@@ -24,16 +24,6 @@ Basketball Video Analyzer - local-first app for analyzing youth basketball games
 | Issue Tracker | Beads (`bd` CLI) - **NOT GitHub Issues** |
 | Git | Trunk-based - commit directly to `main` |
 
-## Critical Architecture: Multi-Video Timeline
-
-**Most complex aspect**: Stitching multiple videos from different cameras into a continuous game timeline.
-
-- Each game has multiple videos from different cameras
-- Videos have `recorded_at`, `sequence_order`, `game_time_offset`
-- Annotations reference `game_timestamp` (unified), not video timestamps
-- Cross-video annotations via `annotation_videos` junction table
-- See `docs/implementation-plan.md` section "Unified Game Timeline" for details
-
 ## Database Schema (Key Relationships)
 
 ```
@@ -46,6 +36,8 @@ videos → player_detections (1:many)
 
 ## Development Workflow
 
+**IMPORTANT**: We have been having prompt too large errors when interacting - this is a known bug.  When this happens, we have to start a new fresh session.  To aid in recovery, keep a summary of what we recently accomplished, we're working on, and what the next steps will be in a task-summy document located in `docs/tasks/<id>-summary.md`.
+
 ```bash
 # 1. Check for work
 bd ready
@@ -53,17 +45,19 @@ bd ready
 # 2. Claim issue
 bd update <id> --status=in_progress
 
-# 3. Make changes, test locally
+# 3. Document our plan in `docs/tasks/<id>.md`
 
-# 4. Commit (trunk-based - direct to main)
+# 4. Make changes, update the plan-summary doc, test locally
+
+# 5. update our plan document with implementation details as a seperate section - leave the plan intact.
+
+# 6. Commit (trunk-based - direct to main)
 git commit -m "type(scope): [bbva-xxx] description"
 git push origin main
 
-# 5. Close issue
+# 7. Close issue
 bd close <id> --reason="description"
 
-# 6. Sync beads
-bd sync
 ```
 
 ## Key Patterns

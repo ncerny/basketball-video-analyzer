@@ -31,7 +31,9 @@ class VideoUpdate(BaseModel):
     fps: float | None = Field(None, gt=0)
     resolution: str | None = Field(None, max_length=50)
     processed: bool | None = None
-    processing_status: str | None = Field(None, description="One of: pending, processing, completed, failed")
+    processing_status: str | None = Field(
+        None, description="One of: pending, processing, completed, failed"
+    )
     recorded_at: dt.datetime | None = None
     sequence_order: int | None = Field(None, ge=0)
     game_time_offset: float | None = Field(None, ge=0)
@@ -59,3 +61,38 @@ class VideoList(BaseModel):
     page: int
     page_size: int
     total_pages: int
+
+
+class JerseyNumberReading(BaseModel):
+    id: int
+    frame_number: int
+    tracking_id: int
+    raw_ocr_output: str
+    parsed_number: int | None
+    confidence: float
+    is_valid: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class JerseyNumberReadingList(BaseModel):
+    video_id: int
+    readings: list[JerseyNumberReading]
+    total: int
+
+
+class AggregatedJerseyNumber(BaseModel):
+    tracking_id: int
+    jersey_number: int | None
+    confidence: float
+    total_readings: int
+    valid_readings: int
+    has_conflict: bool
+    all_numbers: list[int]
+
+
+class JerseyNumbersByTrack(BaseModel):
+    video_id: int
+    tracks: list[AggregatedJerseyNumber]
+    total_tracks: int
+    tracks_with_numbers: int

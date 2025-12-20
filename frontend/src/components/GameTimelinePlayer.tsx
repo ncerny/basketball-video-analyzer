@@ -37,7 +37,8 @@ import { MultiVideoPlayer } from './MultiVideoPlayer';
 import { VideoProgressBar } from './VideoProgressBar';
 import { DetectionOverlay } from './DetectionOverlay';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
-import { detectionAPI } from '../api';
+import { detectionAPI, jerseyNumbersAPI } from '../api';
+import type { AggregatedJerseyNumber } from '../api/jerseyNumbers';
 import type { Video } from '../types/timeline';
 import type { Detection } from '../types/api';
 
@@ -84,6 +85,7 @@ export const GameTimelinePlayer: React.FC<GameTimelinePlayerProps> = ({
   // Detection overlay state
   const [showDetections, setShowDetections] = useState(false);
   const [detections, setDetections] = useState<Detection[]>([]);
+  const [jerseyNumbers, setJerseyNumbers] = useState<Map<number, AggregatedJerseyNumber>>(new Map());
   const [videoElement, setVideoElement] = useState<HTMLVideoElement | null>(null);
   const [currentFrame, setCurrentFrame] = useState(0);
   const videoContainerRef = useRef<HTMLDivElement | null>(null);
@@ -93,7 +95,7 @@ export const GameTimelinePlayer: React.FC<GameTimelinePlayerProps> = ({
     setCurrentVideo(video);
     onVideoChange?.(video);
 
-    // Load detections when video changes
+    // Load detections and jersey numbers when video changes
     if (video && showDetections) {
       detectionAPI.getVideoDetections(video.id, { limit: 10000 })
         .then(response => {
@@ -103,8 +105,22 @@ export const GameTimelinePlayer: React.FC<GameTimelinePlayerProps> = ({
           console.error('Failed to load detections:', err);
           setDetections([]);
         });
+
+      jerseyNumbersAPI.getByTrack(video.id)
+        .then(response => {
+          const map = new Map<number, AggregatedJerseyNumber>();
+          for (const track of response.tracks) {
+            map.set(track.tracking_id, track);
+          }
+          setJerseyNumbers(map);
+        })
+        .catch(err => {
+          console.error('Failed to load jersey numbers:', err);
+          setJerseyNumbers(new Map());
+        });
     } else {
       setDetections([]);
+      setJerseyNumbers(new Map());
     }
   }, [onVideoChange, showDetections]);
 
@@ -134,12 +150,10 @@ export const GameTimelinePlayer: React.FC<GameTimelinePlayerProps> = ({
     };
   }, [videoElement, currentVideo]);
 
-  // Toggle detection overlay
   const toggleDetections = useCallback(() => {
     const newValue = !showDetections;
     setShowDetections(newValue);
 
-    // Load detections if turning on and we have a video
     if (newValue && currentVideo) {
       detectionAPI.getVideoDetections(currentVideo.id, { limit: 10000 })
         .then(response => {
@@ -149,8 +163,22 @@ export const GameTimelinePlayer: React.FC<GameTimelinePlayerProps> = ({
           console.error('Failed to load detections:', err);
           setDetections([]);
         });
+
+      jerseyNumbersAPI.getByTrack(currentVideo.id)
+        .then(response => {
+          const map = new Map<number, AggregatedJerseyNumber>();
+          for (const track of response.tracks) {
+            map.set(track.tracking_id, track);
+          }
+          setJerseyNumbers(map);
+        })
+        .catch(err => {
+          console.error('Failed to load jersey numbers:', err);
+          setJerseyNumbers(new Map());
+        });
     } else if (!newValue) {
       setDetections([]);
+      setJerseyNumbers(new Map());
     }
   }, [showDetections, currentVideo]);
 
@@ -231,17 +259,17 @@ export const GameTimelinePlayer: React.FC<GameTimelinePlayerProps> = ({
             showGapIndicator={true}
           />
 
-          {/* Detection overlay */}
           {videoElement && videoContainerRef.current && (
             <DetectionOverlay
               videoElement={videoElement}
               detections={detections}
               currentFrame={currentFrame}
               visible={showDetections}
-              minConfidence={0.5}
+              minConfidence={0.35}
               showConfidence={true}
               showTrackingId={true}
               containerRef={videoContainerRef}
+              jerseyNumbers={jerseyNumbers}
             />
           )}
         </Box>

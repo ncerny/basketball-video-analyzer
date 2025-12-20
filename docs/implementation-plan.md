@@ -264,6 +264,87 @@ A local-first, multi-platform application for analyzing youth basketball game vi
 - Optional: Transform perspective for bird's-eye view
 - Use court position for filtering false detections
 
+#### 2.4 Batch-Based Processing Pipeline
+
+**Problem**: Long-running video processing is fragile - if interrupted, all progress is lost. OCR is slow (~15s/frame) and blocks detection progress.
+
+**Solution**: Process videos in batches with database checkpoints, enabling resume after interruption.
+
+##### Architecture: Batch-Based Task DAG
+
+```
+Video Processing Job
+│
+├─ Batch 1: [Detect frames 0-29] ──→ [OCR batch 1 detections]
+├─ Batch 2: [Detect frames 30-59] ──→ [OCR batch 2 detections]  
+├─ Batch 3: [Detect frames 60-89] ──→ [OCR batch 3 detections]
+└─ ...
+
+Each arrow = dependency (OCR blocked only by its detection batch)
+Batches are independent of each other
+```
+
+##### Execution Modes
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| **Sequential** | Detection → OCR → next batch | Local, single GPU, predictable |
+| **Pipeline** | Detection N+1 while OCR N | Local, if spare cycles |
+| **Distributed** | Separate nodes for detection/OCR | Future, multi-machine |
+
+##### Database: Processing Batches Table
+
+```sql
+CREATE TABLE processing_batches (
+    id INTEGER PRIMARY KEY,
+    video_id INTEGER REFERENCES videos(id),
+    batch_index INTEGER,              -- 0, 1, 2, ...
+    frame_start INTEGER,
+    frame_end INTEGER,
+    detection_status TEXT,            -- pending, processing, completed, failed
+    ocr_status TEXT,                  -- pending, processing, completed, failed, skipped
+    detection_completed_at TIMESTAMP,
+    ocr_completed_at TIMESTAMP,
+    created_at TIMESTAMP
+);
+```
+
+##### Code Structure
+
+```
+backend/app/services/
+├── batch_processor.py         # Individual batch operations
+│   ├── DetectionBatchProcessor   # Run detection on frame range
+│   └── OCRBatchProcessor         # Run OCR on detection batch
+├── batch_orchestrator.py      # Coordinates batch execution
+│   ├── SequentialOrchestrator    # Mode 1: local sequential
+│   ├── PipelineOrchestrator      # Mode 2: local pipeline  
+│   └── DistributedOrchestrator   # Mode 3: distributed
+└── detection_pipeline.py      # Refactored to use orchestrator
+```
+
+##### Resume Logic
+
+1. On job start, query `processing_batches` for video
+2. Find first batch where `detection_status != 'completed'`
+3. Resume from that batch
+4. Skip already-completed OCR batches
+
+##### Configuration
+
+```python
+# config.py
+batch_size_frames: int = 30
+execution_mode: Literal["sequential", "pipeline", "distributed"] = "sequential"
+```
+
+##### Benefits
+
+1. **Resilient**: Interrupted jobs resume from last checkpoint
+2. **Flexible**: Swap execution mode without changing processors
+3. **Observable**: Batch table provides granular progress visibility
+4. **Scalable**: Path to distributed processing on multiple nodes
+
 ### Phase 3: Play Recognition
 **Goal**: Automatic play detection and categorization
 

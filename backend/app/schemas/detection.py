@@ -26,6 +26,16 @@ class DetectionJobRequest(BaseModel):
         le=1.0,
         description="Minimum confidence score for detections (0.1-1.0)",
     )
+    max_seconds: float | None = Field(
+        default=None,
+        ge=1.0,
+        le=3600.0,
+        description="Maximum seconds of video to process (for testing). None = full video.",
+    )
+    enable_court_detection: bool = Field(
+        default=True,
+        description="Enable court boundary filtering (disable for testing tracking)",
+    )
 
 
 class JobProgress(BaseModel):

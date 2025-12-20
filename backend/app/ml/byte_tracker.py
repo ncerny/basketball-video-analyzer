@@ -24,7 +24,7 @@ class PlayerTracker:
         self,
         track_activation_threshold: float = 0.5,
         lost_track_buffer: int = 30,
-        minimum_matching_threshold: float = 0.3,
+        minimum_matching_threshold: float = 0.35,
         frame_rate: int = 30,
     ) -> None:
         """Initialize the player tracker.

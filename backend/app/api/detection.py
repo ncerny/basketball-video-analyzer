@@ -79,6 +79,8 @@ async def start_detection(
             "sample_interval": params.sample_interval,
             "batch_size": params.batch_size,
             "confidence_threshold": params.confidence_threshold,
+            "max_seconds": params.max_seconds,
+            "enable_court_detection": params.enable_court_detection,
         },
     )
 
@@ -319,3 +321,38 @@ async def delete_video_detections(
     delete_stmt = delete(PlayerDetection).where(PlayerDetection.video_id == video_id)
     await db.execute(delete_stmt)
     await db.commit()
+
+
+@router.get("/ml-config")
+async def get_ml_config() -> dict:
+    """Get ML configuration and device information for diagnostics."""
+    from app.config import settings
+    from app.services.detection_pipeline import DetectionPipeline
+
+    resolved_device = DetectionPipeline._resolve_device(settings.ml_device)
+    batch_size = DetectionPipeline._get_optimal_batch_size(resolved_device)
+
+    # Check PyTorch availability
+    torch_info = {}
+    try:
+        import torch
+
+        torch_info = {
+            "version": torch.__version__,
+            "cuda_available": torch.cuda.is_available(),
+            "mps_available": (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()),
+        }
+    except ImportError:
+        torch_info = {"error": "PyTorch not installed"}
+
+    return {
+        "ml_device_setting": settings.ml_device,
+        "resolved_device": resolved_device,
+        "batch_size": batch_size,
+        "batch_size_cpu": settings.yolo_batch_size_cpu,
+        "batch_size_mps": settings.yolo_batch_size_mps,
+        "batch_size_cuda": settings.yolo_batch_size_cuda,
+        "inference_timing_enabled": settings.enable_inference_timing,
+        "confidence_threshold": settings.yolo_confidence_threshold,
+        "torch": torch_info,
+    }

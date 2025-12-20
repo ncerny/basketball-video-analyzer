@@ -23,7 +23,9 @@ class Settings(BaseSettings):
 
     ml_models_path: str = "./models"
     ml_device: Literal["cpu", "mps", "cuda", "auto"] = "auto"
-    yolo_model_name: str = "yolov8n.pt"
+    detection_backend: Literal["yolo", "rfdetr"] = "rfdetr"
+    tracking_backend: Literal["bytetrack", "norfair"] = "norfair"
+    yolo_model_name: str = "yolov8s.pt"
     yolo_confidence_threshold: float = 0.35
     yolo_person_class_id: int = 0
 
@@ -34,6 +36,11 @@ class Settings(BaseSettings):
 
     # Enable performance logging
     enable_inference_timing: bool = False
+
+    # OCR settings
+    enable_jersey_ocr: bool = True
+    ocr_sample_rate: int = 10  # Run OCR every Nth frame per tracking_id
+    ocr_model_name: str = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
 
     @property
     def models_dir(self) -> Path:

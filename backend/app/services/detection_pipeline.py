@@ -9,38 +9,71 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
+import numpy as np
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.config import settings
+from app.ml.base import BaseDetector
 from app.ml.byte_tracker import PlayerTracker
+from app.ml.color_extractor import extract_jersey_color
 from app.ml.court_detector import CourtDetector
-from app.ml.types import Detection, FrameDetections
+from app.ml.jersey_ocr import JerseyOCR, OCRConfig, OCRResult
+from app.ml.legibility_filter import LegibilityConfig, check_legibility, extract_jersey_crop
+from app.ml.norfair_tracker import NorfairTracker
+from app.ml.types import BoundingBox, Detection, FrameDetections
 from app.ml.yolo_detector import YOLODetector
 from app.models.detection import PlayerDetection
+from app.models.jersey_number import JerseyNumber
 from app.models.video import ProcessingStatus, Video
 from app.services.frame_extractor import FrameExtractor
+from app.services.track_merger import TrackMerger, TrackMergerConfig
+
+
+@dataclass
+class PipelinePhase:
+    start_pct: int
+    end_pct: int
+    number: int
+    name: str
+
+    def progress(self, phase_pct: float, detail: str, total_phases: int) -> tuple[int, str]:
+        phase_range = self.end_pct - self.start_pct
+        overall_pct = int(self.start_pct + (phase_pct * phase_range))
+        message = f"[{self.number}/{total_phases}] {self.name}: {detail}"
+        return overall_pct, message
+
+
+PHASE_SETUP = PipelinePhase(start_pct=0, end_pct=10, number=1, name="Setup")
+PHASE_DETECTION = PipelinePhase(start_pct=10, end_pct=85, number=2, name="Detection")
+PHASE_FINALIZE = PipelinePhase(start_pct=85, end_pct=92, number=3, name="Finalize")
+PHASE_TRACK_MERGE = PipelinePhase(start_pct=92, end_pct=100, number=4, name="Track Merge")
+TOTAL_PHASES = 4
 
 
 @dataclass
 class DetectionPipelineConfig:
-    """Configuration for detection pipeline."""
-
-    sample_interval: int = 3  # Extract every Nth frame
-    batch_size: int = 8  # Frames per detection batch
+    sample_interval: int = 3
+    batch_size: int = 8
     confidence_threshold: float = 0.5
     device: str = "cpu"
-    delete_existing: bool = True  # Delete existing detections before processing
-    enable_tracking: bool = True  # Enable ByteTrack player tracking
-    tracking_buffer_seconds: float = 5.0  # How long to keep lost tracks (increased for occlusions)
-    tracking_iou_threshold: float = (
-        0.2  # IOU threshold for matching (lowered for fast basketball motion)
-    )
-    enable_court_detection: bool = True  # Enable court boundary detection
-    court_overlap_threshold: float = 0.2  # Minimum overlap with court to keep detection
+    delete_existing: bool = True
+    enable_tracking: bool = True
+    track_activation_threshold: float = 0.25
+    tracking_buffer_seconds: float = 5.0
+    tracking_iou_threshold: float = 0.35
+    enable_court_detection: bool = True
+    court_overlap_threshold: float = 0.2
+    max_seconds: float | None = None
+    enable_track_merging: bool = True
+    merge_max_temporal_gap_frames: int = 30
+    merge_max_spatial_distance: float = 300.0
+    merge_min_size_similarity: float = 0.6
+    enable_jersey_ocr: bool = True
+    ocr_sample_rate: int = 10
 
 
 @dataclass
@@ -96,9 +129,12 @@ class DetectionPipeline:
             f"confidence_threshold={self._config.confidence_threshold}"
         )
 
-        self._detector: YOLODetector | None = None
-        self._tracker: PlayerTracker | None = None
+        self._detector: BaseDetector | None = None
+        self._tracker: PlayerTracker | NorfairTracker | None = None
         self._court_detector: CourtDetector | None = None
+        self._jersey_ocr: JerseyOCR | None = None
+        self._legibility_config = LegibilityConfig()
+        self._ocr_frame_counts: dict[int, int] = {}
         self._video_storage_path = Path(settings.video_storage_path)
 
     @staticmethod
@@ -128,35 +164,44 @@ class DetectionPipeline:
         else:
             return settings.yolo_batch_size_cpu
 
-    def _get_detector(self) -> YOLODetector:
-        """Get or create the YOLO detector instance."""
+    def _get_detector(self) -> BaseDetector:
         if self._detector is None:
-            self._detector = YOLODetector(
-                model_path=settings.yolo_model_name,
-                confidence_threshold=self._config.confidence_threshold,
-                device=self._config.device,
-            )
+            if settings.detection_backend == "rfdetr":
+                from app.ml.rfdetr_detector import RFDETRDetector
+
+                logger.info("Using RF-DETR detection backend")
+                self._detector = RFDETRDetector(
+                    confidence_threshold=self._config.confidence_threshold,
+                    device=self._config.device,
+                )
+            else:
+                logger.info("Using YOLO detection backend")
+                self._detector = YOLODetector(
+                    model_path=settings.yolo_model_name,
+                    confidence_threshold=self._config.confidence_threshold,
+                    device=self._config.device,
+                )
         return self._detector
 
-    def _get_tracker(self, fps: float) -> PlayerTracker:
-        """Get or create tracker instance.
-
-        Args:
-            fps: Video frame rate for motion prediction.
-
-        Returns:
-            PlayerTracker instance configured for this video.
-        """
+    def _get_tracker(self, fps: float) -> PlayerTracker | NorfairTracker:
         if self._tracker is None:
-            # Calculate buffer in frames
             buffer_frames = int(self._config.tracking_buffer_seconds * fps)
 
-            self._tracker = PlayerTracker(
-                track_activation_threshold=self._config.confidence_threshold,
-                lost_track_buffer=buffer_frames,
-                minimum_matching_threshold=self._config.tracking_iou_threshold,
-                frame_rate=int(fps),
-            )
+            if settings.tracking_backend == "norfair":
+                logger.info("Using Norfair tracking backend (Euclidean distance)")
+                self._tracker = NorfairTracker(
+                    distance_threshold=250.0,
+                    hit_counter_max=buffer_frames,
+                    initialization_delay=1,
+                )
+            else:
+                logger.info("Using ByteTrack tracking backend (IOU)")
+                self._tracker = PlayerTracker(
+                    track_activation_threshold=self._config.track_activation_threshold,
+                    lost_track_buffer=buffer_frames,
+                    minimum_matching_threshold=self._config.tracking_iou_threshold,
+                    frame_rate=int(fps),
+                )
         return self._tracker
 
     def _get_court_detector(self) -> CourtDetector:
@@ -168,6 +213,79 @@ class DetectionPipeline:
         if self._court_detector is None:
             self._court_detector = CourtDetector()
         return self._court_detector
+
+    def _get_jersey_ocr(self) -> JerseyOCR:
+        if self._jersey_ocr is None:
+            config = OCRConfig(
+                model_name=settings.ocr_model_name,
+                device=self._config.device,
+            )
+            self._jersey_ocr = JerseyOCR(config)
+        return self._jersey_ocr
+
+    def _should_run_ocr_for_track(self, tracking_id: int) -> bool:
+        count = self._ocr_frame_counts.get(tracking_id, 0)
+        self._ocr_frame_counts[tracking_id] = count + 1
+        return count % self._config.ocr_sample_rate == 0
+
+    def _reset_ocr_state(self) -> None:
+        self._ocr_frame_counts.clear()
+
+    async def _run_ocr_on_frame(
+        self,
+        video_id: int,
+        frame_number: int,
+        frame: np.ndarray,
+        detections: FrameDetections,
+    ) -> int:
+        if not self._config.enable_jersey_ocr:
+            return 0
+
+        ocr = self._get_jersey_ocr()
+        ocr_count = 0
+
+        for detection in detections.detections:
+            if not detection.is_person:
+                continue
+
+            if detection.tracking_id is None:
+                continue
+
+            if not self._should_run_ocr_for_track(detection.tracking_id):
+                continue
+
+            bbox = BoundingBox(
+                x=detection.bbox.x,
+                y=detection.bbox.y,
+                width=detection.bbox.width,
+                height=detection.bbox.height,
+            )
+
+            legibility = check_legibility(
+                frame, bbox, detection.confidence, self._legibility_config
+            )
+            if not legibility.is_legible:
+                continue
+
+            crop = extract_jersey_crop(frame, bbox)
+            if crop.size == 0:
+                continue
+
+            ocr_result: OCRResult = await asyncio.to_thread(ocr.read_jersey_number, crop)
+
+            jersey_number = JerseyNumber(
+                video_id=video_id,
+                frame_number=frame_number,
+                tracking_id=detection.tracking_id,
+                raw_ocr_output=ocr_result.raw_text[:255],
+                parsed_number=ocr_result.parsed_number,
+                confidence=ocr_result.confidence,
+                is_valid=ocr_result.is_valid,
+            )
+            self._db.add(jersey_number)
+            ocr_count += 1
+
+        return ocr_count
 
     async def process_video(
         self,
@@ -189,8 +307,8 @@ class DetectionPipeline:
                 progress_callback(current, total, message)
 
         try:
-            # Get video from database
-            report_progress(0, 100, "Loading video metadata...")
+            pct, msg = PHASE_SETUP.progress(0.0, "Loading video metadata...", TOTAL_PHASES)
+            report_progress(pct, 100, msg)
             video = await self._get_video(video_id)
 
             if not video:
@@ -206,9 +324,11 @@ class DetectionPipeline:
             # Update status to processing
             await self._update_video_status(video, ProcessingStatus.PROCESSING)
 
-            # Delete existing detections if configured
             if self._config.delete_existing:
-                report_progress(5, 100, "Clearing existing detections...")
+                pct, msg = PHASE_SETUP.progress(
+                    0.5, "Clearing existing detections...", TOTAL_PHASES
+                )
+                report_progress(pct, 100, msg)
                 await self._delete_existing_detections(video_id)
 
             # Get absolute video path
@@ -225,16 +345,31 @@ class DetectionPipeline:
                     error=f"Video file not found: {video_path}",
                 )
 
-            # Run detection pipeline
-            report_progress(10, 100, "Initializing detector...")
+            pct, msg = PHASE_SETUP.progress(1.0, "Initializing detector...", TOTAL_PHASES)
+            report_progress(pct, 100, msg)
             result = await self._run_detection(video, video_path, report_progress)
 
-            # Update video status
+            if not result.error and self._config.enable_track_merging:
+                pct, msg = PHASE_TRACK_MERGE.progress(
+                    0.0, "Merging fragmented tracks...", TOTAL_PHASES
+                )
+                report_progress(pct, 100, msg)
+                merge_result = await self._run_track_merger(video_id)
+                if merge_result.error:
+                    logger.warning(f"Track merge failed: {merge_result.error}")
+                else:
+                    logger.info(
+                        f"Track merge: {merge_result.original_track_count} → "
+                        f"{merge_result.merged_track_count} tracks"
+                    )
+
             if result.error:
                 await self._update_video_status(video, ProcessingStatus.FAILED)
             else:
                 await self._update_video_status(video, ProcessingStatus.COMPLETED, processed=True)
 
+            pct, msg = PHASE_TRACK_MERGE.progress(1.0, "Complete", TOTAL_PHASES)
+            report_progress(pct, 100, msg)
             return result
 
         except Exception as e:
@@ -274,8 +409,19 @@ class DetectionPipeline:
 
     async def _delete_existing_detections(self, video_id: int) -> None:
         """Delete existing detections for a video."""
+        await self._db.execute(delete(JerseyNumber).where(JerseyNumber.video_id == video_id))
         await self._db.execute(delete(PlayerDetection).where(PlayerDetection.video_id == video_id))
         await self._db.commit()
+        self._reset_ocr_state()
+
+    async def _run_track_merger(self, video_id: int):
+        merger_config = TrackMergerConfig(
+            max_temporal_gap_frames=self._config.merge_max_temporal_gap_frames,
+            max_spatial_distance=self._config.merge_max_spatial_distance,
+            min_size_similarity=self._config.merge_min_size_similarity,
+        )
+        merger = TrackMerger(self._db, merger_config)
+        return await merger.merge_tracks(video_id)
 
     async def _run_detection(
         self,
@@ -308,19 +454,33 @@ class DetectionPipeline:
                 self._get_court_detector() if self._config.enable_court_detection else None
             )
 
+            # Calculate end frame if max_seconds is set
+            end_frame = None
+            if self._config.max_seconds is not None:
+                end_frame = int(self._config.max_seconds * metadata.fps)
+                end_frame = min(end_frame, metadata.total_frames)
+
             # Calculate total frames to process
             total_sampled_frames = extractor.count_sampled_frames(
-                sample_interval=self._config.sample_interval
+                sample_interval=self._config.sample_interval,
+                end_frame=end_frame,
             )
 
-            report_progress(15, 100, f"Processing {total_sampled_frames} frames...")
+            duration_msg = (
+                f" (first {self._config.max_seconds}s)" if self._config.max_seconds else ""
+            )
+            pct, msg = PHASE_DETECTION.progress(
+                0.0, f"Starting {total_sampled_frames} frames{duration_msg}...", TOTAL_PHASES
+            )
+            report_progress(pct, 100, msg)
 
             # Process frames in batches
             batch_frames = []
             batch_frame_numbers = []
 
             for extracted_frame in extractor.extract_frames_sampled(
-                sample_interval=self._config.sample_interval
+                sample_interval=self._config.sample_interval,
+                end_frame=end_frame,
             ):
                 batch_frames.append(extracted_frame.frame)
                 batch_frame_numbers.append(extracted_frame.frame_number)
@@ -348,12 +508,12 @@ class DetectionPipeline:
                     for i, frame_detections in enumerate(detections_list):
                         frame = batch_frames[i]
 
-                        # 1. Separate persons from balls (track persons only)
                         person_detections, other_detections = self._filter_persons_only(
                             frame_detections
                         )
 
-                        # 2. Apply tracking to persons FIRST (before court filtering)
+                        person_detections = self._extract_colors(person_detections, frame)
+
                         if tracker:
                             person_detections = await asyncio.to_thread(
                                 tracker.update, person_detections
@@ -368,7 +528,15 @@ class DetectionPipeline:
                                 court_detector,
                             )
 
-                        # 4. Combine filtered persons with other detections (balls)
+                        # 4. Run OCR on legible person detections
+                        await self._run_ocr_on_frame(
+                            video.id,
+                            frame_detections.frame_number,
+                            frame,
+                            person_detections,
+                        )
+
+                        # 5. Combine filtered persons with other detections (balls)
                         final_detections = FrameDetections(
                             frame_number=frame_detections.frame_number,
                             detections=person_detections.detections + other_detections,
@@ -387,13 +555,13 @@ class DetectionPipeline:
                     batch_frames = []
                     batch_frame_numbers = []
 
-                    # Update progress (15% to 95% for detection)
-                    progress = 15 + int((frames_processed / total_sampled_frames) * 80)
-                    report_progress(
-                        progress,
-                        100,
-                        f"Processed {frames_processed}/{total_sampled_frames} frames",
+                    frame_pct = frames_processed / total_sampled_frames
+                    pct, msg = PHASE_DETECTION.progress(
+                        frame_pct,
+                        f"{frames_processed}/{total_sampled_frames} frames ({int(frame_pct * 100)}%)",
+                        TOTAL_PHASES,
                     )
+                    report_progress(pct, 100, msg)
 
             # Process remaining frames
             if batch_frames:
@@ -412,16 +580,15 @@ class DetectionPipeline:
                         f"{batch_inference_time:.2f}s ({fps:.1f} fps) on {self._config.device}"
                     )
 
-                # Apply tracking and court detection (same as main batch)
                 for i, frame_detections in enumerate(detections_list):
                     frame = batch_frames[i]
 
-                    # 1. Separate persons from balls (track persons only)
                     person_detections, other_detections = self._filter_persons_only(
                         frame_detections
                     )
 
-                    # 2. Apply tracking to persons FIRST (before court filtering)
+                    person_detections = self._extract_colors(person_detections, frame)
+
                     if tracker:
                         person_detections = await asyncio.to_thread(
                             tracker.update, person_detections
@@ -436,7 +603,15 @@ class DetectionPipeline:
                             court_detector,
                         )
 
-                    # 4. Combine filtered persons with other detections (balls)
+                    # 4. Run OCR on legible person detections
+                    await self._run_ocr_on_frame(
+                        video.id,
+                        frame_detections.frame_number,
+                        frame,
+                        person_detections,
+                    )
+
+                    # 5. Combine filtered persons with other detections (balls)
                     final_detections = FrameDetections(
                         frame_number=frame_detections.frame_number,
                         detections=person_detections.detections + other_detections,
@@ -453,11 +628,14 @@ class DetectionPipeline:
 
                 frames_processed += len(batch_frames)
 
-            report_progress(95, 100, "Finalizing...")
+            pct, msg = PHASE_FINALIZE.progress(0.0, "Committing detections...", TOTAL_PHASES)
+            report_progress(pct, 100, msg)
 
-        # Commit all detections
         await self._db.commit()
-        report_progress(100, 100, "Complete")
+        pct, msg = PHASE_FINALIZE.progress(
+            1.0, f"Saved {total_detections} detections", TOTAL_PHASES
+        )
+        report_progress(pct, 100, msg)
 
         return DetectionPipelineResult(
             video_id=video.id,
@@ -491,6 +669,29 @@ class DetectionPipeline:
                 frame_height=frame_detections.frame_height,
             ),
             others,
+        )
+
+    def _extract_colors(self, frame_detections: FrameDetections, frame) -> FrameDetections:
+        enriched = []
+        for det in frame_detections.detections:
+            color_hist = extract_jersey_color(
+                frame, det.bbox.x, det.bbox.y, det.bbox.width, det.bbox.height
+            )
+            enriched.append(
+                Detection(
+                    bbox=det.bbox,
+                    confidence=det.confidence,
+                    class_id=det.class_id,
+                    class_name=det.class_name,
+                    tracking_id=det.tracking_id,
+                    color_hist=color_hist,
+                )
+            )
+        return FrameDetections(
+            frame_number=frame_detections.frame_number,
+            detections=enriched,
+            frame_width=frame_detections.frame_width,
+            frame_height=frame_detections.frame_height,
         )
 
     def _filter_detections_by_court(
@@ -597,6 +798,8 @@ async def create_detection_job_worker(job_manager):
                 confidence_threshold=job.metadata.get(
                     "confidence_threshold", settings.yolo_confidence_threshold
                 ),
+                max_seconds=job.metadata.get("max_seconds"),
+                enable_court_detection=job.metadata.get("enable_court_detection", True),
             )
             pipeline = DetectionPipeline(db, config)
             result = await pipeline.process_video(video_id, update_progress)
