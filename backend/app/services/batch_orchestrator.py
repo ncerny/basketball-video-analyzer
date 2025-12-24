@@ -22,6 +22,7 @@ from app.services.batch_processor import (
     OCRBatchResult,
 )
 from app.services.frame_extractor import FrameExtractor
+from app.services.identity_switch_detector import IdentitySwitchConfig, IdentitySwitchDetector
 from app.services.track_merger import TrackMerger, TrackMergerConfig
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ class OrchestratorConfig:
     enable_tracking: bool = True
     enable_court_detection: bool = True
     enable_jersey_ocr: bool = True
+    enable_identity_switch_detection: bool = True
     enable_track_merging: bool = True
     max_seconds: float | None = None
     delete_existing: bool = True
@@ -117,13 +119,18 @@ class SequentialOrchestrator:
                 )
 
             resume_batch_index = await self._find_resume_point(video_id)
+            has_existing_batches = await self._has_existing_batches(video_id)
 
-            if resume_batch_index is None and self._config.delete_existing:
+            if (
+                resume_batch_index is None
+                and not has_existing_batches
+                and self._config.delete_existing
+            ):
                 report(3, "[1/4] Setup: Clearing existing data...")
                 await self._delete_existing_data(video_id)
 
             report(5, "[1/4] Setup: Creating batch plan...")
-            batches = await self._create_or_get_batches(video_id, video_path, resume_batch_index)
+            batches = await self._create_or_extend_batches(video_id, video_path)
 
             if not batches:
                 report(100, "[4/4] Complete: No frames to process")
@@ -144,6 +151,7 @@ class SequentialOrchestrator:
                 enable_tracking=self._config.enable_tracking,
                 enable_court_detection=self._config.enable_court_detection,
                 enable_jersey_ocr=self._config.enable_jersey_ocr,
+                ocr_max_workers=settings.ocr_max_workers,
             )
 
             detection_processor = DetectionBatchProcessor(self._db, batch_config)
@@ -197,11 +205,15 @@ class SequentialOrchestrator:
                     )
                     total_ocr_results += ocr_result.ocr_results_created
 
+            if self._config.enable_identity_switch_detection:
+                report(87, "[4/5] Identity Switch Detection: Splitting switched tracks...")
+                await self._run_identity_switch_detector(video_id)
+
             if self._config.enable_track_merging:
-                report(90, "[4/4] Track Merge: Merging fragmented tracks...")
+                report(93, "[5/5] Track Merge: Merging fragmented tracks...")
                 await self._run_track_merger(video_id)
 
-            report(100, "[4/4] Complete")
+            report(100, "[5/5] Complete")
             await self._update_video_status(video, ProcessingStatus.COMPLETED, processed=True)
 
             return OrchestratorResult(
@@ -258,15 +270,13 @@ class SequentialOrchestrator:
         if incomplete_batch:
             return incomplete_batch.batch_index
 
+        return None
+
+    async def _has_existing_batches(self, video_id: int) -> bool:
         result = await self._db.execute(
             select(ProcessingBatch).where(ProcessingBatch.video_id == video_id).limit(1)
         )
-        any_batch = result.scalar_one_or_none()
-
-        if any_batch:
-            return None
-
-        return None
+        return result.scalar_one_or_none() is not None
 
     async def _delete_existing_data(self, video_id: int) -> None:
         await self._db.execute(delete(JerseyNumber).where(JerseyNumber.video_id == video_id))
@@ -274,8 +284,8 @@ class SequentialOrchestrator:
         await self._db.execute(delete(ProcessingBatch).where(ProcessingBatch.video_id == video_id))
         await self._db.commit()
 
-    async def _create_or_get_batches(
-        self, video_id: int, video_path: Path, resume_batch_index: int | None
+    async def _create_or_extend_batches(
+        self, video_id: int, video_path: Path
     ) -> list[ProcessingBatch]:
         result = await self._db.execute(
             select(ProcessingBatch)
@@ -284,9 +294,6 @@ class SequentialOrchestrator:
         )
         existing_batches = list(result.scalars().all())
 
-        if existing_batches:
-            return existing_batches
-
         with FrameExtractor(video_path) as extractor:
             metadata = extractor.get_metadata()
 
@@ -294,12 +301,21 @@ class SequentialOrchestrator:
             if self._config.max_seconds is not None:
                 end_frame = min(int(self._config.max_seconds * metadata.fps), metadata.total_frames)
 
-            batches = []
-            batch_index = 0
-            frame_start = 0
-
             frames_per_batch = self._config.frames_per_batch * self._config.sample_interval
 
+            if existing_batches:
+                last_batch = existing_batches[-1]
+                if last_batch.frame_end >= end_frame:
+                    return existing_batches
+
+                frame_start = last_batch.frame_end
+                batch_index = last_batch.batch_index + 1
+                logger.info(f"Extending batches: adding from frame {frame_start} to {end_frame}")
+            else:
+                frame_start = 0
+                batch_index = 0
+
+            new_batches = []
             while frame_start < end_frame:
                 frame_end = min(frame_start + frames_per_batch, end_frame)
 
@@ -313,17 +329,17 @@ class SequentialOrchestrator:
                     created_at=datetime.now(timezone.utc),
                 )
                 self._db.add(batch)
-                batches.append(batch)
+                new_batches.append(batch)
 
                 frame_start = frame_end
                 batch_index += 1
 
-            await self._db.commit()
+            if new_batches:
+                await self._db.commit()
+                for batch in new_batches:
+                    await self._db.refresh(batch)
 
-            for batch in batches:
-                await self._db.refresh(batch)
-
-            return batches
+            return existing_batches + new_batches
 
     def _extract_batch_frames(
         self, extractor: FrameExtractor, frame_start: int, frame_end: int
@@ -341,8 +357,28 @@ class SequentialOrchestrator:
 
         return frames, frame_numbers
 
+    async def _run_identity_switch_detector(self, video_id: int) -> None:
+        switch_config = IdentitySwitchConfig(
+            window_size_frames=settings.identity_switch_window_size_frames,
+            min_readings_per_window=settings.identity_switch_min_readings,
+            switch_threshold=settings.identity_switch_threshold,
+        )
+        detector = IdentitySwitchDetector(self._db, switch_config)
+        result = await detector.detect_and_split(video_id)
+        if result.error:
+            logger.warning(f"Identity switch detection failed: {result.error}")
+        else:
+            logger.info(
+                f"Identity switch detection: {result.tracks_analyzed} tracks analyzed, "
+                f"{result.switches_detected} switches found, {result.tracks_split} tracks split"
+            )
+
     async def _run_track_merger(self, video_id: int) -> None:
-        merger_config = TrackMergerConfig()
+        merger_config = TrackMergerConfig(
+            enable_jersey_merge=settings.enable_jersey_merge,
+            min_jersey_confidence=settings.min_jersey_confidence,
+            min_jersey_readings=settings.min_jersey_readings,
+        )
         merger = TrackMerger(self._db, merger_config)
         result = await merger.merge_tracks(video_id)
         if result.error:

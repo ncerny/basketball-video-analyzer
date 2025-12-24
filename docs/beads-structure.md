@@ -302,11 +302,14 @@ test(backend): [bbva-7k4] add unit tests for video service
 
 ## Current Status Summary
 
-- **Total Issues**: 56
+- **Total Issues**: 56+
 - **Phase 1**: Complete (37 closed)
-- **Phase 2**: 14 tasks created
+- **Phase 2**: In Progress
+  - ML infrastructure complete (detection, tracking, OCR)
+  - Batch-based processing pipeline implemented
+  - Resume/extend capability for long-running jobs
 - **Future Phases**: 4 epics (Phase 3-6)
-- **Ready to Work**: 7 issues (2 P0 Phase 2 tasks + 5 future epics)
-- **Blocked**: 12 tasks (waiting on dependencies)
 
-**Recommended Starting Point**: Work on `bbva-fut` (ML Infrastructure) and `bbva-12x` (Background Jobs) in parallel.
+**Current Focus**: Phase 2 refinement - testing batch pipeline with real videos, UI integration.
+
+> **See also**: [architecture.md](./architecture.md) for current system architecture.

@@ -228,14 +228,44 @@ class TestDeleteVideoDetections:
 
     def test_delete_detections_success(self, sample_video):
         """Test successfully deleting all detections for a video (when empty)."""
-        # First verify we can get detections
         response = client.get(f"/api/videos/{sample_video['id']}/detections")
         assert response.json()["total_detections"] == 0
 
-        # Delete detections (even when empty, should succeed)
         response = client.delete(f"/api/videos/{sample_video['id']}/detections")
         assert response.status_code == 204
 
-        # Verify still empty
         response = client.get(f"/api/videos/{sample_video['id']}/detections")
         assert response.json()["total_detections"] == 0
+
+
+class TestReprocessTracks:
+    """Tests for POST /videos/{video_id}/reprocess-tracks endpoint."""
+
+    def test_reprocess_tracks_video_not_found(self):
+        response = client.post("/api/videos/999/reprocess-tracks")
+        assert response.status_code == 404
+
+    def test_reprocess_tracks_empty_video(self, sample_video):
+        response = client.post(f"/api/videos/{sample_video['id']}/reprocess-tracks")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["video_id"] == sample_video["id"]
+        assert data["identity_switches_detected"] == 0
+        assert data["tracks_before_merge"] == 0
+        assert data["tracks_after_merge"] == 0
+
+    def test_reprocess_tracks_with_options(self, sample_video):
+        response = client.post(
+            f"/api/videos/{sample_video['id']}/reprocess-tracks",
+            json={
+                "enable_identity_switch_detection": True,
+                "enable_track_merging": False,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["video_id"] == sample_video["id"]
+        assert data["tracks_before_merge"] == 0
+        assert data["tracks_after_merge"] == 0

@@ -112,3 +112,30 @@ class DetectionStats(BaseModel):
     balls_detected: int
     frames_with_detections: int
     avg_detections_per_frame: float
+
+
+class TrackReprocessRequest(BaseModel):
+    """Request to reprocess tracks (identity switch detection + merging)."""
+
+    enable_identity_switch_detection: bool = Field(
+        default=True,
+        description="Run identity switch detection to split tracks with jersey changes",
+    )
+    enable_track_merging: bool = Field(
+        default=True,
+        description="Run track merging to consolidate fragmented tracks",
+    )
+
+
+class TrackReprocessResponse(BaseModel):
+    """Response from track reprocessing."""
+
+    video_id: int
+    identity_switches_detected: int = Field(
+        description="Number of identity switches found and split"
+    )
+    tracks_before_merge: int = Field(description="Track count before merging")
+    tracks_after_merge: int = Field(description="Track count after merging")
+    spatial_merges: int = Field(description="Number of spatial-based merges")
+    jersey_merges: int = Field(description="Number of jersey-based merges")
+    message: str

@@ -1,0 +1,66 @@
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#4f46e5'}}}%%
+flowchart TB
+    subgraph JobSystem["Job System"]
+        JobManager["Job Manager"]
+        Worker["Detection Worker"]
+    end
+
+    subgraph Orchestration["Batch Orchestration"]
+        Orchestrator["SequentialOrchestrator"]
+        Resume["Resume Logic<br/>Find incomplete batch"]
+        Extend["Extend Logic<br/>Add batches for new range"]
+    end
+
+    subgraph BatchProcessing["Batch Processing"]
+        subgraph Batch1["Batch 1: Frames 0-89"]
+            Det1["Detection<br/>YOLO/RF-DETR + Tracking"]
+            OCR1["OCR<br/>Parallel ThreadPool"]
+        end
+        subgraph Batch2["Batch 2: Frames 90-179"]
+            Det2["Detection"]
+            OCR2["OCR"]
+        end
+        subgraph BatchN["Batch N: Frames ..."]
+            DetN["Detection"]
+            OCRN["OCR"]
+        end
+    end
+
+    subgraph Checkpointing["Database Checkpoints"]
+        BatchTable[("processing_batches<br/>Status per batch")]
+        DetTable[("player_detections<br/>Persisted immediately")]
+        OCRTable[("jersey_numbers<br/>Persisted immediately")]
+    end
+
+    subgraph PostProcess["Post-Processing"]
+        TrackMerge["Track Merger<br/>Consolidate fragments"]
+    end
+
+    JobManager --> Worker
+    Worker --> Orchestrator
+    Orchestrator --> Resume
+    Orchestrator --> Extend
+    
+    Resume --> Batch1
+    Extend --> BatchN
+    
+    Det1 --> OCR1
+    Det2 --> OCR2
+    DetN --> OCRN
+    
+    Batch1 --> Batch2
+    Batch2 --> BatchN
+    
+    Det1 -.-> DetTable
+    OCR1 -.-> OCRTable
+    Det1 -.-> BatchTable
+    OCR1 -.-> BatchTable
+    
+    BatchN --> TrackMerge
+    TrackMerge -.-> DetTable
+
+    style Resume fill:#22c55e
+    style Extend fill:#22c55e
+    style BatchTable fill:#f59e0b
+    style DetTable fill:#f59e0b
+    style OCRTable fill:#f59e0b

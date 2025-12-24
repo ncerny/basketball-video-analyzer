@@ -1,0 +1,129 @@
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#4f46e5'}}}%%
+erDiagram
+    games ||--o{ videos : contains
+    games ||--o{ game_rosters : has
+    games ||--o{ annotations : has
+    
+    players ||--o{ game_rosters : participates
+    
+    videos ||--o{ annotation_videos : referenced_by
+    videos ||--o{ player_detections : contains
+    videos ||--o{ jersey_numbers : contains
+    videos ||--o{ processing_batches : processed_in
+    
+    annotations ||--o{ annotation_videos : spans
+    annotations ||--o| plays : describes
+    
+    games {
+        int id PK
+        string name
+        date date
+        string location
+        string home_team
+        string away_team
+        datetime created_at
+        datetime updated_at
+    }
+    
+    videos {
+        int id PK
+        int game_id FK
+        string file_path
+        float duration_seconds
+        float fps
+        string resolution
+        datetime upload_date
+        bool processed
+        enum processing_status
+        datetime recorded_at
+        int sequence_order
+        float game_time_offset
+        string thumbnail_path
+    }
+    
+    players {
+        int id PK
+        string name
+        int jersey_number
+        string team
+        string notes
+        datetime created_at
+    }
+    
+    game_rosters {
+        int id PK
+        int game_id FK
+        int player_id FK
+        enum team_side
+        int jersey_number_override
+    }
+    
+    annotations {
+        int id PK
+        int game_id FK
+        float game_timestamp_start
+        float game_timestamp_end
+        enum annotation_type
+        float confidence_score
+        bool verified
+        enum created_by
+        string title
+        string description
+        datetime created_at
+        datetime updated_at
+    }
+    
+    annotation_videos {
+        int id PK
+        int annotation_id FK
+        int video_id FK
+        float video_timestamp_start
+        float video_timestamp_end
+    }
+    
+    plays {
+        int id PK
+        int annotation_id FK
+        enum play_type
+        json player_ids
+        string team
+        int points_scored
+        string description
+    }
+    
+    player_detections {
+        int id PK
+        int video_id FK
+        int frame_number
+        int player_id FK
+        float bbox_x
+        float bbox_y
+        float bbox_width
+        float bbox_height
+        int tracking_id
+        float confidence_score
+    }
+    
+    jersey_numbers {
+        int id PK
+        int video_id FK
+        int frame_number
+        int tracking_id
+        string raw_ocr_output
+        int parsed_number
+        float confidence
+        bool is_valid
+    }
+    
+    processing_batches {
+        int id PK
+        int video_id FK
+        int batch_index
+        int frame_start
+        int frame_end
+        enum detection_status
+        enum ocr_status
+        datetime detection_completed_at
+        datetime ocr_completed_at
+        datetime created_at
+    }

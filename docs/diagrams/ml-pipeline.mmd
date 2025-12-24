@@ -1,0 +1,72 @@
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#4f46e5'}}}%%
+flowchart LR
+    subgraph Input
+        Video["Video File"]
+    end
+
+    subgraph FrameExtraction["Frame Extraction"]
+        Extractor["FrameExtractor<br/>OpenCV"]
+        Sampling["Sample every N frames<br/>(configurable)"]
+    end
+
+    subgraph Detection["Object Detection"]
+        Detector{"Detection Backend"}
+        YOLO["YOLOv8<br/>yolov8s.pt"]
+        RFDETR["RF-DETR<br/>Default"]
+    end
+
+    subgraph Filtering["Detection Filtering"]
+        Court["Court Detection<br/>Color Segmentation"]
+        CourtFilter["Filter by<br/>Court Bounds"]
+    end
+
+    subgraph Tracking["Player Tracking"]
+        Tracker{"Tracking Backend"}
+        ByteTrack["ByteTrack"]
+        Norfair["Norfair<br/>Default"]
+        Color["Color Extraction<br/>Jersey Colors"]
+    end
+
+    subgraph OCR["Jersey Number Recognition"]
+        Legibility["Legibility Filter<br/>Size + Confidence"]
+        Crop["Jersey Crop<br/>Upper Body"]
+        VLM["SmolVLM2<br/>Vision-Language Model"]
+        Parse["Number Parser<br/>0-99 Validation"]
+    end
+
+    subgraph PostProcess["Post-Processing"]
+        TrackMerge["Track Merger<br/>Fragment Consolidation"]
+        JerseyAgg["Jersey Aggregator<br/>Confidence Voting"]
+    end
+
+    subgraph Output
+        DB[(SQLite Database)]
+        Detections["PlayerDetection"]
+        JerseyNums["JerseyNumber"]
+    end
+
+    Video --> Extractor
+    Extractor --> Sampling
+    Sampling --> Detector
+    Detector --> YOLO
+    Detector --> RFDETR
+    YOLO --> Court
+    RFDETR --> Court
+    Court --> CourtFilter
+    CourtFilter --> Tracker
+    Tracker --> ByteTrack
+    Tracker --> Norfair
+    ByteTrack --> Color
+    Norfair --> Color
+    Color --> Legibility
+    Legibility --> Crop
+    Crop --> VLM
+    VLM --> Parse
+    
+    Color --> TrackMerge
+    Parse --> JerseyAgg
+    
+    TrackMerge --> Detections
+    JerseyAgg --> JerseyNums
+    Detections --> DB
+    JerseyNums --> DB

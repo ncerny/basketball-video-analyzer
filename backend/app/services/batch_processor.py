@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,7 +14,7 @@ from sqlalchemy.future import select
 from app.config import settings
 from app.ml.base import BaseDetector
 from app.ml.byte_tracker import PlayerTracker
-from app.ml.color_extractor import extract_jersey_color
+from app.ml.color_extractor import extract_jersey_color, extract_shoe_color
 from app.ml.court_detector import CourtDetector
 from app.ml.jersey_ocr import JerseyOCR, OCRConfig, OCRResult
 from app.ml.legibility_filter import LegibilityConfig, check_legibility, extract_jersey_crop
@@ -41,6 +42,7 @@ class BatchConfig:
     court_overlap_threshold: float = 0.2
     enable_jersey_ocr: bool = True
     ocr_sample_rate: int = 10
+    ocr_max_workers: int = 4
 
 
 @dataclass
@@ -57,6 +59,14 @@ class OCRBatchResult:
     batch_id: int
     detections_processed: int
     ocr_results_created: int
+
+
+@dataclass
+class _OCRWorkItem:
+    crop: np.ndarray
+    video_id: int
+    frame_number: int
+    tracking_id: int
 
 
 class DetectionBatchProcessor:
@@ -205,7 +215,10 @@ class DetectionBatchProcessor:
     ) -> FrameDetections:
         enriched = []
         for det in frame_detections.detections:
-            color_hist = extract_jersey_color(
+            jersey_hist = extract_jersey_color(
+                frame, det.bbox.x, det.bbox.y, det.bbox.width, det.bbox.height
+            )
+            shoe_hist = extract_shoe_color(
                 frame, det.bbox.x, det.bbox.y, det.bbox.width, det.bbox.height
             )
             enriched.append(
@@ -215,7 +228,8 @@ class DetectionBatchProcessor:
                     class_id=det.class_id,
                     class_name=det.class_name,
                     tracking_id=det.tracking_id,
-                    color_hist=color_hist,
+                    color_hist=jersey_hist,
+                    shoe_color_hist=shoe_hist,
                 )
             )
         return FrameDetections(
@@ -316,9 +330,57 @@ class OCRBatchProcessor:
         batch.ocr_status = BatchStatus.PROCESSING
         await self._db.commit()
 
+        work_items = await self._collect_ocr_work_items(frames, frame_numbers, video_id)
+        detections_processed = work_items[0] if work_items else 0
+        crops_to_process = work_items[1] if work_items else []
+
+        if not crops_to_process:
+            batch.ocr_status = BatchStatus.COMPLETED
+            batch.ocr_completed_at = datetime.now(timezone.utc)
+            await self._db.commit()
+            return OCRBatchResult(
+                batch_id=batch.id,
+                detections_processed=detections_processed,
+                ocr_results_created=0,
+            )
+
         ocr = self._get_jersey_ocr()
-        detections_processed = 0
+        ocr_results = await self._run_ocr_parallel(ocr, crops_to_process)
+
         ocr_results_created = 0
+        for item, ocr_result in zip(crops_to_process, ocr_results):
+            jersey_number = JerseyNumber(
+                video_id=item.video_id,
+                frame_number=item.frame_number,
+                tracking_id=item.tracking_id,
+                raw_ocr_output=ocr_result.raw_text[:255],
+                parsed_number=ocr_result.parsed_number,
+                confidence=ocr_result.confidence,
+                is_valid=ocr_result.is_valid,
+            )
+            self._db.add(jersey_number)
+            ocr_results_created += 1
+
+        await self._db.commit()
+
+        batch.ocr_status = BatchStatus.COMPLETED
+        batch.ocr_completed_at = datetime.now(timezone.utc)
+        await self._db.commit()
+
+        return OCRBatchResult(
+            batch_id=batch.id,
+            detections_processed=detections_processed,
+            ocr_results_created=ocr_results_created,
+        )
+
+    async def _collect_ocr_work_items(
+        self,
+        frames: list[np.ndarray],
+        frame_numbers: list[int],
+        video_id: int,
+    ) -> tuple[int, list[_OCRWorkItem]]:
+        detections_processed = 0
+        work_items: list[_OCRWorkItem] = []
 
         for i, frame_number in enumerate(frame_numbers):
             frame = frames[i]
@@ -357,28 +419,39 @@ class OCRBatchProcessor:
                 if crop.size == 0:
                     continue
 
-                ocr_result: OCRResult = await asyncio.to_thread(ocr.read_jersey_number, crop)
-
-                jersey_number = JerseyNumber(
-                    video_id=video_id,
-                    frame_number=frame_number,
-                    tracking_id=detection.tracking_id,
-                    raw_ocr_output=ocr_result.raw_text[:255],
-                    parsed_number=ocr_result.parsed_number,
-                    confidence=ocr_result.confidence,
-                    is_valid=ocr_result.is_valid,
+                work_items.append(
+                    _OCRWorkItem(
+                        crop=crop,
+                        video_id=video_id,
+                        frame_number=frame_number,
+                        tracking_id=detection.tracking_id,
+                    )
                 )
-                self._db.add(jersey_number)
-                ocr_results_created += 1
 
-        await self._db.commit()
+        return detections_processed, work_items
 
-        batch.ocr_status = BatchStatus.COMPLETED
-        batch.ocr_completed_at = datetime.now(timezone.utc)
-        await self._db.commit()
+    async def _run_ocr_parallel(
+        self,
+        ocr: JerseyOCR,
+        work_items: list[_OCRWorkItem],
+    ) -> list[OCRResult]:
+        loop = asyncio.get_running_loop()
 
-        return OCRBatchResult(
-            batch_id=batch.id,
-            detections_processed=detections_processed,
-            ocr_results_created=ocr_results_created,
-        )
+        ocr_start_time = time.time()
+
+        with ThreadPoolExecutor(max_workers=self._config.ocr_max_workers) as executor:
+            futures = [
+                loop.run_in_executor(executor, ocr.read_jersey_number, item.crop)
+                for item in work_items
+            ]
+            results = await asyncio.gather(*futures)
+
+        if settings.enable_inference_timing:
+            ocr_time = time.time() - ocr_start_time
+            crops_per_sec = len(work_items) / ocr_time if ocr_time > 0 else 0
+            logger.info(
+                f"OCR batch: {len(work_items)} crops in {ocr_time:.2f}s "
+                f"({crops_per_sec:.1f} crops/s, {self._config.ocr_max_workers} workers)"
+            )
+
+        return list(results)

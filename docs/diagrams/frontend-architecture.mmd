@@ -1,0 +1,65 @@
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#4f46e5'}}}%%
+graph TB
+    subgraph Pages["Pages"]
+        GamesList["GamesList<br/>Game browser"]
+        GameDetail["GameDetail<br/>Game overview"]
+        VideoAnalysis["VideoAnalysis<br/>Main analysis view"]
+        PlayersList["PlayersList<br/>Player management"]
+    end
+
+    subgraph Components["Core Components"]
+        subgraph VideoPlayback["Video Playback"]
+            GameTimeline["GameTimelinePlayer<br/>Unified timeline"]
+            MultiVideo["MultiVideoPlayer<br/>Multi-video engine"]
+            TimelineBar["TimelineBar<br/>Timeline visualization"]
+            VideoSeq["VideoSequencer<br/>Video ordering"]
+        end
+        
+        subgraph Annotations["Annotation System"]
+            AnnotPanel["AnnotationPanel<br/>Side panel"]
+            AnnotForm["AnnotationForm<br/>Create/Edit"]
+            AnnotList["AnnotationList<br/>Annotation list"]
+            AnnotAccord["AnnotationAccordion<br/>Grouped view"]
+        end
+        
+        subgraph Detection["Detection Overlay"]
+            DetOverlay["DetectionOverlay<br/>Bounding boxes"]
+            Progress["GameProgressBar<br/>Processing status"]
+        end
+        
+        Navigation["Navigation<br/>App navigation"]
+    end
+
+    subgraph State["State Management (Zustand)"]
+        TimelineStore["timelineStore<br/>Playback state"]
+        GlobalStore["store/index<br/>App state"]
+    end
+
+    subgraph API["API Client"]
+        GamesAPI["games.ts"]
+        VideosAPI["videos.ts"]
+        PlayersAPI["players.ts"]
+        AnnotAPI["annotations.ts"]
+        DetectAPI["detection.ts"]
+        JerseyAPI["jerseyNumbers.ts"]
+    end
+
+    GamesList --> GamesAPI
+    GameDetail --> VideosAPI
+    VideoAnalysis --> GameTimeline
+    VideoAnalysis --> AnnotPanel
+    VideoAnalysis --> DetOverlay
+    PlayersList --> PlayersAPI
+
+    GameTimeline --> MultiVideo
+    GameTimeline --> TimelineBar
+    GameTimeline --> TimelineStore
+    
+    AnnotPanel --> AnnotForm
+    AnnotPanel --> AnnotList
+    AnnotList --> AnnotAccord
+    AnnotForm --> AnnotAPI
+    
+    DetOverlay --> DetectAPI
+    DetOverlay --> JerseyAPI
+    Progress --> DetectAPI

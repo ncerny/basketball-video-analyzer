@@ -3,24 +3,26 @@
 Merges fragmented ByteTrack tracking IDs that likely belong to the same player.
 This compensates for ByteTrack's IOU-only matching which fails when players
 move more than their bounding box width between detection gaps.
+
+Includes jersey number-based merging to consolidate tracks with the same
+detected jersey number.
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
 from sqlalchemy import text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.detection import PlayerDetection
+from app.models.jersey_number import JerseyNumber
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class TrackMergerConfig:
-    """Configuration for track merging."""
-
     # Maximum frames between end of track A and start of track B to consider merging
     max_temporal_gap_frames: int = 30  # ~1 second at 30fps
 
@@ -33,47 +35,50 @@ class TrackMergerConfig:
     # Minimum track length to be considered as "anchor" (longer tracks absorb shorter ones)
     min_anchor_length: int = 3
 
+    # Jersey-based merging settings
+    enable_jersey_merge: bool = True
+    min_jersey_confidence: float = 0.6  # Minimum confidence to use jersey for merging
+    min_jersey_readings: int = 2  # Minimum OCR readings to trust jersey number
+
 
 @dataclass
 class TrackInfo:
-    """Information about a single track."""
-
     tracking_id: int
     detection_count: int
     first_frame: int
     last_frame: int
-    # Position at first detection
     first_x: float
     first_y: float
     first_width: float
     first_height: float
-    # Position at last detection
     last_x: float
     last_y: float
     last_width: float
     last_height: float
     avg_confidence: float
+    jersey_number: int | None = None
+    jersey_confidence: float = 0.0
+    jersey_readings: int = 0
 
 
 @dataclass
 class MergeCandidate:
-    """A pair of tracks that could potentially be merged."""
-
-    source_track: TrackInfo  # Track to be absorbed (typically shorter/orphan)
-    target_track: TrackInfo  # Track to absorb into (typically longer/anchor)
-    temporal_gap: int  # Frames between source end and target start
-    spatial_distance: float  # Center distance between endpoints
-    size_similarity: float  # Bbox size similarity ratio
+    source_track: TrackInfo
+    target_track: TrackInfo
+    temporal_gap: int
+    spatial_distance: float
+    size_similarity: float
+    merge_reason: str = "spatial"
 
 
 @dataclass
 class TrackMergerResult:
-    """Result from running track merger."""
-
     video_id: int
     original_track_count: int
     merged_track_count: int
     merges_performed: int
+    spatial_merges: int = 0
+    jersey_merges: int = 0
     error: str | None = None
 
 
@@ -108,16 +113,6 @@ class TrackMerger:
         video_id: int,
         progress_callback: ProgressCallback | None = None,
     ) -> TrackMergerResult:
-        """Merge fragmented tracks for a video.
-
-        Args:
-            video_id: ID of video to process.
-            progress_callback: Optional callback for progress updates.
-
-        Returns:
-            TrackMergerResult with merge statistics.
-        """
-
         def report_progress(current: int, total: int, message: str) -> None:
             if progress_callback:
                 progress_callback(current, total, message)
@@ -125,7 +120,6 @@ class TrackMerger:
         try:
             report_progress(0, 100, "Analyzing tracks...")
 
-            # Step 1: Get all track info
             tracks = await self._get_track_info(video_id)
             original_count = len(tracks)
 
@@ -138,33 +132,51 @@ class TrackMerger:
                 )
 
             logger.info(f"Video {video_id}: Found {original_count} tracks to analyze")
-            report_progress(20, 100, f"Found {original_count} tracks")
+            report_progress(10, 100, f"Found {original_count} tracks")
 
-            # Step 2: Find merge candidates
-            candidates = self._find_merge_candidates(tracks)
-            logger.info(f"Video {video_id}: Found {len(candidates)} merge candidates")
-            report_progress(40, 100, f"Found {len(candidates)} merge candidates")
+            if self._config.enable_jersey_merge:
+                await self._enrich_tracks_with_jersey_data(video_id, tracks)
+                jersey_tracks = sum(1 for t in tracks if t.jersey_number is not None)
+                logger.info(f"Video {video_id}: {jersey_tracks} tracks have jersey numbers")
+                report_progress(20, 100, f"{jersey_tracks} tracks have jersey numbers")
 
-            # Step 3: Build merge plan (handle transitive merges)
-            merge_plan = self._build_merge_plan(candidates, tracks)
-            report_progress(60, 100, f"Planned {len(merge_plan)} merges")
+            spatial_candidates = self._find_spatial_merge_candidates(tracks)
+            logger.info(
+                f"Video {video_id}: Found {len(spatial_candidates)} spatial merge candidates"
+            )
+            report_progress(30, 100, f"Found {len(spatial_candidates)} spatial candidates")
 
-            # Step 4: Execute merges
-            merges_performed = 0
-            for source_id, target_id in merge_plan.items():
+            jersey_candidates = []
+            if self._config.enable_jersey_merge:
+                jersey_candidates = self._find_jersey_merge_candidates(tracks)
+                logger.info(
+                    f"Video {video_id}: Found {len(jersey_candidates)} jersey merge candidates"
+                )
+                report_progress(40, 100, f"Found {len(jersey_candidates)} jersey candidates")
+
+            all_candidates = spatial_candidates + jersey_candidates
+            merge_plan = self._build_merge_plan(all_candidates, tracks)
+            report_progress(50, 100, f"Planned {len(merge_plan)} merges")
+
+            spatial_merges = 0
+            jersey_merges = 0
+            for source_id, (target_id, reason) in merge_plan.items():
                 await self._execute_merge(video_id, source_id, target_id)
-                merges_performed += 1
+                if reason == "jersey":
+                    jersey_merges += 1
+                else:
+                    spatial_merges += 1
 
             await self._db.commit()
-            report_progress(90, 100, f"Executed {merges_performed} merges")
+            merges_performed = spatial_merges + jersey_merges
+            report_progress(80, 100, f"Executed {merges_performed} merges")
 
-            # Step 5: Count final tracks
             final_tracks = await self._get_track_info(video_id)
             merged_count = len(final_tracks)
 
             logger.info(
-                f"Video {video_id}: Merged {original_count} tracks down to {merged_count} "
-                f"({merges_performed} merges performed)"
+                f"Video {video_id}: Merged {original_count} → {merged_count} tracks "
+                f"(spatial={spatial_merges}, jersey={jersey_merges})"
             )
             report_progress(100, 100, "Complete")
 
@@ -173,6 +185,8 @@ class TrackMerger:
                 original_track_count=original_count,
                 merged_track_count=merged_count,
                 merges_performed=merges_performed,
+                spatial_merges=spatial_merges,
+                jersey_merges=jersey_merges,
             )
 
         except Exception as e:
@@ -262,8 +276,51 @@ class TrackMerger:
             for row in rows
         ]
 
-    def _find_merge_candidates(self, tracks: list[TrackInfo]) -> list[MergeCandidate]:
-        """Find pairs of tracks that could potentially be merged."""
+    async def _enrich_tracks_with_jersey_data(self, video_id: int, tracks: list[TrackInfo]) -> None:
+        query = text("""
+            SELECT 
+                tracking_id,
+                parsed_number,
+                COUNT(*) as reading_count,
+                SUM(CASE WHEN is_valid THEN confidence ELSE 0 END) as total_conf,
+                SUM(CASE WHEN is_valid THEN 1 ELSE 0 END) as valid_count
+            FROM jersey_numbers
+            WHERE video_id = :video_id AND is_valid = 1 AND parsed_number IS NOT NULL
+            GROUP BY tracking_id, parsed_number
+        """)
+        result = await self._db.execute(query, {"video_id": video_id})
+        rows = result.fetchall()
+
+        track_jerseys: dict[int, dict] = {}
+        for row in rows:
+            tracking_id, parsed_number, reading_count, total_conf, valid_count = row
+            if tracking_id not in track_jerseys:
+                track_jerseys[tracking_id] = {"numbers": {}, "total_readings": 0}
+            track_jerseys[tracking_id]["numbers"][parsed_number] = {
+                "count": reading_count,
+                "conf": total_conf,
+            }
+            track_jerseys[tracking_id]["total_readings"] += reading_count
+
+        for track in tracks:
+            if track.tracking_id in track_jerseys:
+                jersey_data = track_jerseys[track.tracking_id]
+                numbers = jersey_data["numbers"]
+                if numbers:
+                    best_number = max(numbers.keys(), key=lambda n: numbers[n]["conf"])
+                    best_data = numbers[best_number]
+                    total_conf = sum(d["conf"] for d in numbers.values())
+                    confidence = best_data["conf"] / total_conf if total_conf > 0 else 0
+
+                    if (
+                        best_data["count"] >= self._config.min_jersey_readings
+                        and confidence >= self._config.min_jersey_confidence
+                    ):
+                        track.jersey_number = best_number
+                        track.jersey_confidence = confidence
+                        track.jersey_readings = best_data["count"]
+
+    def _find_spatial_merge_candidates(self, tracks: list[TrackInfo]) -> list[MergeCandidate]:
         candidates = []
 
         # Sort tracks by first_frame for efficient pairwise comparison
@@ -318,8 +375,47 @@ class TrackMerger:
                         temporal_gap=temporal_gap,
                         spatial_distance=spatial_distance,
                         size_similarity=size_similarity,
+                        merge_reason="spatial",
                     )
                 )
+
+        return candidates
+
+    def _find_jersey_merge_candidates(self, tracks: list[TrackInfo]) -> list[MergeCandidate]:
+        candidates = []
+
+        tracks_with_jersey = [t for t in tracks if t.jersey_number is not None]
+
+        jersey_groups: dict[int, list[TrackInfo]] = {}
+        for track in tracks_with_jersey:
+            jersey = track.jersey_number
+            if jersey not in jersey_groups:
+                jersey_groups[jersey] = []
+            jersey_groups[jersey].append(track)
+
+        for jersey_number, group in jersey_groups.items():
+            if len(group) < 2:
+                continue
+
+            sorted_group = sorted(group, key=lambda t: (-t.detection_count, -t.jersey_confidence))
+            anchor = sorted_group[0]
+
+            for track in sorted_group[1:]:
+                if track.first_frame > anchor.last_frame or track.last_frame < anchor.first_frame:
+                    candidates.append(
+                        MergeCandidate(
+                            source_track=track,
+                            target_track=anchor,
+                            temporal_gap=abs(track.first_frame - anchor.last_frame),
+                            spatial_distance=0.0,
+                            size_similarity=1.0,
+                            merge_reason="jersey",
+                        )
+                    )
+                    logger.debug(
+                        f"Jersey merge candidate: track {track.tracking_id} → {anchor.tracking_id} "
+                        f"(jersey #{jersey_number})"
+                    )
 
         return candidates
 
@@ -327,47 +423,37 @@ class TrackMerger:
         self,
         candidates: list[MergeCandidate],
         tracks: list[TrackInfo],
-    ) -> dict[int, int]:
-        """Build a merge plan handling transitive merges.
+    ) -> dict[int, tuple[int, str]]:
+        def sort_key(c: MergeCandidate) -> tuple:
+            if c.merge_reason == "jersey":
+                return (0, -c.source_track.jersey_confidence)
+            return (1, c.spatial_distance)
 
-        If A→B and B→C, we want A→C and B→C.
+        sorted_candidates = sorted(candidates, key=sort_key)
 
-        Returns:
-            Dict mapping source_tracking_id → target_tracking_id
-        """
-        # Sort candidates by confidence (prefer merging high-confidence matches)
-        # Use spatial distance as primary sort (closer = better match)
-        sorted_candidates = sorted(candidates, key=lambda c: c.spatial_distance)
-
-        # Track which IDs have been absorbed
         absorbed: set[int] = set()
-        # Map source → ultimate target
-        merge_map: dict[int, int] = {}
+        merge_map: dict[int, tuple[int, str]] = {}
 
         for candidate in sorted_candidates:
             source_id = candidate.source_track.tracking_id
             target_id = candidate.target_track.tracking_id
 
-            # Skip if source already absorbed
             if source_id in absorbed:
                 continue
 
-            # Follow target chain to find ultimate target
             ultimate_target = target_id
             while ultimate_target in merge_map:
-                ultimate_target = merge_map[ultimate_target]
+                ultimate_target = merge_map[ultimate_target][0]
 
-            # Don't merge if target was absorbed into something else
             if target_id in absorbed and target_id != ultimate_target:
                 continue
 
-            # Record the merge
-            merge_map[source_id] = ultimate_target
+            merge_map[source_id] = (ultimate_target, candidate.merge_reason)
             absorbed.add(source_id)
 
             logger.debug(
                 f"Merge plan: track {source_id} → {ultimate_target} "
-                f"(gap={candidate.temporal_gap}, dist={candidate.spatial_distance:.1f})"
+                f"(reason={candidate.merge_reason}, gap={candidate.temporal_gap})"
             )
 
         return merge_map
@@ -378,13 +464,20 @@ class TrackMerger:
         source_tracking_id: int,
         target_tracking_id: int,
     ) -> None:
-        """Update all detections from source track to use target track ID."""
-        stmt = (
+        detection_stmt = (
             update(PlayerDetection)
             .where(PlayerDetection.video_id == video_id)
             .where(PlayerDetection.tracking_id == source_tracking_id)
             .values(tracking_id=target_tracking_id)
         )
-        await self._db.execute(stmt)
+        await self._db.execute(detection_stmt)
+
+        jersey_stmt = (
+            update(JerseyNumber)
+            .where(JerseyNumber.video_id == video_id)
+            .where(JerseyNumber.tracking_id == source_tracking_id)
+            .values(tracking_id=target_tracking_id)
+        )
+        await self._db.execute(jersey_stmt)
 
         logger.debug(f"Merged track {source_tracking_id} into {target_tracking_id}")

@@ -1,0 +1,58 @@
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#4f46e5'}}}%%
+graph TB
+    subgraph API["API Layer"]
+        GamesAPI["games.py<br/>Games CRUD"]
+        VideosAPI["videos.py<br/>Videos CRUD"]
+        PlayersAPI["players.py<br/>Players CRUD"]
+        RostersAPI["game_rosters.py<br/>Roster Management"]
+        AnnotationsAPI["annotations.py<br/>Annotations CRUD"]
+        DetectionAPI["detection.py<br/>Detection Jobs"]
+        TimelineAPI["timeline.py<br/>Timeline Data"]
+        UploadAPI["video_upload.py<br/>Video Upload"]
+    end
+
+    subgraph Services["Services Layer"]
+        VideoStorage["video_storage.py<br/>File Management"]
+        Thumbnail["thumbnail_generator.py<br/>Thumbnail Generation"]
+        Timeline["timeline_sequencer.py<br/>Video Sequencing"]
+        JobManager["job_manager.py<br/>Background Jobs"]
+        Pipeline["detection_pipeline.py<br/>Detection Coordinator"]
+        Orchestrator["batch_orchestrator.py<br/>Batch Orchestration"]
+        BatchProc["batch_processor.py<br/>Batch Processing"]
+        FrameExt["frame_extractor.py<br/>Frame Extraction"]
+        TrackMerge["track_merger.py<br/>Track Merging"]
+        JerseyAgg["jersey_aggregator.py<br/>Jersey Aggregation"]
+    end
+
+    subgraph ML["ML Layer"]
+        YOLO["yolo_detector.py"]
+        RFDETR["rfdetr_detector.py"]
+        ByteTrack["byte_tracker.py"]
+        Norfair["norfair_tracker.py"]
+        JerseyOCR["jersey_ocr.py"]
+        CourtDet["court_detector.py"]
+        ColorExt["color_extractor.py"]
+        Legibility["legibility_filter.py"]
+    end
+
+    GamesAPI --> VideoStorage
+    VideosAPI --> VideoStorage
+    VideosAPI --> Thumbnail
+    UploadAPI --> VideoStorage
+    DetectionAPI --> JobManager
+    TimelineAPI --> Timeline
+
+    JobManager --> Pipeline
+    Pipeline --> Orchestrator
+    Orchestrator --> BatchProc
+    BatchProc --> FrameExt
+    Orchestrator --> TrackMerge
+    
+    BatchProc --> YOLO
+    BatchProc --> RFDETR
+    BatchProc --> ByteTrack
+    BatchProc --> Norfair
+    BatchProc --> JerseyOCR
+    BatchProc --> CourtDet
+    BatchProc --> ColorExt
+    JerseyOCR --> Legibility

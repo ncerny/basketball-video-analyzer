@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 import re
+import threading
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -28,6 +29,8 @@ JERSEY_NUMBER_PROMPT = "What is the jersey number visible in this image? Reply w
 
 
 class JerseyOCR:
+    _load_lock = threading.Lock()
+
     def __init__(self, config: OCRConfig | None = None) -> None:
         self._config = config or OCRConfig()
         self._model: "AutoModelForImageTextToText | None" = None
@@ -39,32 +42,36 @@ class JerseyOCR:
         if self._loaded:
             return
 
-        from transformers import AutoModelForImageTextToText, AutoProcessor
-        import torch
+        with self._load_lock:
+            if self._loaded:
+                return
 
-        self._processor = AutoProcessor.from_pretrained(self._config.model_name)
+            from transformers import AutoModelForImageTextToText, AutoProcessor
+            import torch
 
-        self._device = self._config.device
-        if self._config.device == "auto":
-            if torch.backends.mps.is_available():
-                self._device = "mps"
-            elif torch.cuda.is_available():
-                self._device = "cuda"
-            else:
-                self._device = "cpu"
+            self._processor = AutoProcessor.from_pretrained(self._config.model_name)
 
-        dtype = torch.float16 if self._device != "cpu" else torch.float32
+            self._device = self._config.device
+            if self._config.device == "auto":
+                if torch.backends.mps.is_available():
+                    self._device = "mps"
+                elif torch.cuda.is_available():
+                    self._device = "cuda"
+                else:
+                    self._device = "cpu"
 
-        self._model = AutoModelForImageTextToText.from_pretrained(
-            self._config.model_name,
-            torch_dtype=dtype,
-            device_map=self._device if self._device not in ("mps", "cpu") else None,
-        )
+            use_dtype = torch.float16 if self._device != "cpu" else torch.float32
 
-        if self._device in ("mps", "cpu"):
-            self._model = self._model.to(self._device)
+            self._model = AutoModelForImageTextToText.from_pretrained(
+                self._config.model_name,
+                torch_dtype=use_dtype,
+                device_map=self._device if self._device not in ("mps", "cpu") else None,
+            )
 
-        self._loaded = True
+            if self._device in ("mps", "cpu"):
+                self._model = self._model.to(self._device)
+
+            self._loaded = True
 
     def is_loaded(self) -> bool:
         return self._loaded
@@ -126,7 +133,7 @@ class JerseyOCR:
         if text in ("none", "no number", "not visible", "n/a", ""):
             return None, 0.5, False
 
-        numbers = re.findall(r"\d+", text)
+        numbers = re.findall(r"\d{1,2}", text)
         if not numbers:
             return None, 0.3, False
 
@@ -137,7 +144,7 @@ class JerseyOCR:
             return None, 0.2, False
 
         if number < 0 or number > 99:
-            return number, 0.4, False
+            return None, 0.4, False
 
         confidence = 0.9 if len(numbers) == 1 else 0.7
 

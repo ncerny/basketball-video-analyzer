@@ -17,6 +17,8 @@ from app.schemas.detection import (
     DetectionStats,
     JobResponse,
     JobProgress,
+    TrackReprocessRequest,
+    TrackReprocessResponse,
     VideoDetectionsResponse,
 )
 from app.services.job_manager import JobStatus, get_job_manager
@@ -168,7 +170,9 @@ async def get_video_detections(
     min_confidence: Annotated[
         float | None, Query(ge=0, le=1, description="Minimum confidence threshold")
     ] = None,
-    limit: Annotated[int, Query(ge=1, le=10000, description="Maximum detections to return")] = 1000,
+    limit: Annotated[
+        int, Query(ge=1, le=100000, description="Maximum detections to return")
+    ] = 10000,
 ) -> VideoDetectionsResponse:
     """Get all player detections for a video.
 
@@ -302,9 +306,14 @@ async def delete_video_detections(
 ) -> None:
     """Delete all detections for a video.
 
-    Use this to clear detection results before re-running detection.
+    Clears all detection data including player detections, jersey OCR results,
+    and processing batch records. Use this before re-running detection.
     """
-    # Verify video exists
+    from sqlalchemy import delete
+
+    from app.models.jersey_number import JerseyNumber
+    from app.models.processing_batch import ProcessingBatch
+
     video_stmt = select(VideoModel).where(VideoModel.id == video_id)
     video_result = await db.execute(video_stmt)
     video = video_result.scalar_one_or_none()
@@ -315,12 +324,84 @@ async def delete_video_detections(
             detail=f"Video with id {video_id} not found",
         )
 
-    # Delete all detections
-    from sqlalchemy import delete
-
-    delete_stmt = delete(PlayerDetection).where(PlayerDetection.video_id == video_id)
-    await db.execute(delete_stmt)
+    await db.execute(delete(JerseyNumber).where(JerseyNumber.video_id == video_id))
+    await db.execute(delete(PlayerDetection).where(PlayerDetection.video_id == video_id))
+    await db.execute(delete(ProcessingBatch).where(ProcessingBatch.video_id == video_id))
     await db.commit()
+
+
+@router.post("/videos/{video_id}/reprocess-tracks", response_model=TrackReprocessResponse)
+async def reprocess_tracks(
+    video_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    request: TrackReprocessRequest | None = None,
+) -> TrackReprocessResponse:
+    """Reprocess tracks for an already-analyzed video.
+
+    Runs identity switch detection and track merging on existing detection data.
+    Use this to apply tracking improvements to videos processed before these
+    features were added.
+
+    - Identity switch detection: Splits tracks where jersey number changes mid-track
+    - Track merging: Consolidates fragmented tracks based on spatial proximity and jersey numbers
+    """
+    from app.config import settings
+    from app.services.identity_switch_detector import IdentitySwitchConfig, IdentitySwitchDetector
+    from app.services.track_merger import TrackMerger, TrackMergerConfig
+
+    video_stmt = select(VideoModel).where(VideoModel.id == video_id)
+    video_result = await db.execute(video_stmt)
+    video = video_result.scalar_one_or_none()
+
+    if not video:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Video with id {video_id} not found",
+        )
+
+    params = request if request is not None else TrackReprocessRequest()
+
+    switches_detected = 0
+    tracks_split = 0
+
+    if params.enable_identity_switch_detection:
+        switch_config = IdentitySwitchConfig(
+            window_size_frames=settings.identity_switch_window_size_frames,
+            min_readings_per_window=settings.identity_switch_min_readings,
+            switch_threshold=settings.identity_switch_threshold,
+        )
+        detector = IdentitySwitchDetector(db, switch_config)
+        switch_result = await detector.detect_and_split(video_id)
+        switches_detected = switch_result.switches_detected
+        tracks_split = switch_result.tracks_split
+
+    tracks_before = 0
+    tracks_after = 0
+    spatial_merges = 0
+    jersey_merges = 0
+
+    if params.enable_track_merging:
+        merger_config = TrackMergerConfig(
+            enable_jersey_merge=settings.enable_jersey_merge,
+            min_jersey_confidence=settings.min_jersey_confidence,
+            min_jersey_readings=settings.min_jersey_readings,
+        )
+        merger = TrackMerger(db, merger_config)
+        merge_result = await merger.merge_tracks(video_id)
+        tracks_before = merge_result.original_track_count
+        tracks_after = merge_result.merged_track_count
+        spatial_merges = merge_result.spatial_merges
+        jersey_merges = merge_result.jersey_merges
+
+    return TrackReprocessResponse(
+        video_id=video_id,
+        identity_switches_detected=switches_detected,
+        tracks_before_merge=tracks_before,
+        tracks_after_merge=tracks_after,
+        spatial_merges=spatial_merges,
+        jersey_merges=jersey_merges,
+        message=f"Reprocessed: {tracks_split} tracks split, {tracks_before} → {tracks_after} tracks after merge",
+    )
 
 
 @router.get("/ml-config")

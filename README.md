@@ -152,8 +152,9 @@ basketball-video-analyzer/
 │   ├── package.json        # pnpm dependencies
 │   └── vite.config.ts      # Vite configuration
 ├── docs/                   # Project documentation
-│   ├── implementation-plan.md
-│   └── beads-structure.md
+│   ├── architecture.md         # System architecture with diagrams
+│   ├── implementation-plan.md  # Technical specs and roadmap
+│   └── beads-structure.md      # Issue tracker organization
 ├── .beads/                 # Beads issue tracker database
 ├── CLAUDE.md               # Claude Code development guide
 └── README.md               # This file
@@ -162,8 +163,9 @@ basketball-video-analyzer/
 ## Documentation
 
 - **[CLAUDE.md](./CLAUDE.md)**: Development guide for Claude Code instances
-- **[docs/implementation-plan.md](./docs/implementation-plan.md)**: Comprehensive technical architecture (671 lines)
-- **[docs/beads-structure.md](./docs/beads-structure.md)**: Issue tracker organization (271 lines)
+- **[docs/architecture.md](./docs/architecture.md)**: System architecture with diagrams
+- **[docs/implementation-plan.md](./docs/implementation-plan.md)**: Technical specs and roadmap
+- **[docs/beads-structure.md](./docs/beads-structure.md)**: Issue tracker organization
 - **[backend/README.md](./backend/README.md)**: Backend setup and API documentation
 - **[frontend/README.md](./frontend/README.md)**: Frontend setup and development guide
 
@@ -171,17 +173,18 @@ basketball-video-analyzer/
 
 The project is organized into 6 phases:
 
-### Phase 1: MVP Foundation (Current)
+### Phase 1: MVP Foundation ✅
 - ✅ Project setup and infrastructure
-- Video management and upload
-- Manual annotation interface
-- Player roster management
-- Unified multi-video timeline
+- ✅ Video management and upload
+- ✅ Manual annotation interface
+- ✅ Player roster management
+- ✅ Unified multi-video timeline
 
-### Phase 2: Computer Vision
-- Player detection with YOLO
-- Player tracking across frames
-- Jersey number recognition with OCR
+### Phase 2: Computer Vision (Current)
+- Player detection with YOLO/RF-DETR
+- Player tracking with ByteTrack/Norfair
+- Jersey number recognition with SmolVLM2
+- Batch-based processing with resume capability
 
 ### Phase 3: Play Recognition
 - Automatic play detection

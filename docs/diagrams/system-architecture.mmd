@@ -1,0 +1,43 @@
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#4f46e5', 'primaryTextColor': '#fff', 'primaryBorderColor': '#3730a3', 'lineColor': '#6366f1', 'secondaryColor': '#f0f0f0', 'tertiaryColor': '#fff'}}}%%
+graph TB
+    subgraph Frontend["Frontend Layer (React + TypeScript)"]
+        WebApp["Web Application<br/>React 18 + Vite"]
+        Components["Components<br/>Mantine UI + Tailwind"]
+        State["State Management<br/>Zustand"]
+    end
+
+    subgraph Backend["Backend Layer (Python FastAPI)"]
+        API["REST API<br/>FastAPI"]
+        Services["Business Logic<br/>Services Layer"]
+        Jobs["Background Jobs<br/>Job Manager"]
+    end
+
+    subgraph ML["ML/CV Layer"]
+        Detection["Object Detection<br/>YOLOv8 / RF-DETR"]
+        Tracking["Player Tracking<br/>ByteTrack / Norfair"]
+        OCR["Jersey OCR<br/>SmolVLM2"]
+        Court["Court Detection<br/>Color Segmentation"]
+    end
+
+    subgraph Storage["Storage Layer (Local-First)"]
+        Videos["Video Files<br/>Local Filesystem"]
+        DB["Metadata + Annotations<br/>SQLite"]
+        Models["ML Models<br/>Local Cache"]
+    end
+
+    WebApp --> API
+    Components --> State
+    State --> WebApp
+    
+    API --> Services
+    Services --> Jobs
+    Services --> DB
+    
+    Jobs --> Detection
+    Detection --> Tracking
+    Tracking --> OCR
+    Detection --> Court
+    
+    Services --> Videos
+    Detection --> Models
+    OCR --> Models

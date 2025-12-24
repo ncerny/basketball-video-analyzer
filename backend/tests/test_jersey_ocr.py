@@ -72,12 +72,19 @@ class TestJerseyOCR:
         assert confidence == 0.3
         assert not is_valid
 
-    def test_parse_jersey_number_out_of_range(self) -> None:
+    def test_parse_jersey_number_three_digits(self) -> None:
         ocr = JerseyOCR()
         number, confidence, is_valid = ocr._parse_jersey_number("100")
-        assert number == 100
-        assert confidence == 0.4
-        assert not is_valid
+        assert number == 10
+        assert confidence == 0.7
+        assert is_valid
+
+    def test_parse_jersey_number_large_garbage(self) -> None:
+        ocr = JerseyOCR()
+        number, confidence, is_valid = ocr._parse_jersey_number("12345678901234567890")
+        assert number == 12
+        assert confidence == 0.7
+        assert is_valid
 
     def test_parse_jersey_number_zero(self) -> None:
         ocr = JerseyOCR()

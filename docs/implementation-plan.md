@@ -1,5 +1,7 @@
 # Basketball Video Analyzer - Implementation Plan
 
+> **See also**: [architecture.md](./architecture.md) for current system architecture with diagrams.
+
 ## Project Overview
 A local-first, multi-platform application for analyzing youth basketball game videos with semi-automatic player tracking and play tagging capabilities.
 
@@ -62,20 +64,20 @@ A local-first, multi-platform application for analyzing youth basketball game vi
   - OpenCV for frame extraction and manipulation
   - FFmpeg for video encoding/decoding
 - **ML/CV Libraries**:
-  - YOLOv8-nano or YOLOv5-small (ultralytics) - lightweight, local-friendly
-  - ByteTrack or DeepSORT for player tracking
-  - EasyOCR or Tesseract for jersey number recognition
-  - PyTorch (CPU mode for local inference)
-- **Database**: SQLite with SQLAlchemy ORM
-- **Task Queue**: Python asyncio or Celery with Redis (for background processing)
+  - YOLOv8 or RF-DETR (ultralytics) - configurable detection backend
+  - ByteTrack or Norfair for player tracking - configurable tracking backend
+  - SmolVLM2 (vision-language model) for jersey number recognition
+  - PyTorch with auto-detection (CPU/MPS/CUDA)
+- **Database**: SQLite with SQLAlchemy ORM (async via aiosqlite)
+- **Task Queue**: Custom async job manager with background workers
 
 ### Frontend
 - **Web**: React 18+ with TypeScript
 - **Desktop**: Electron with same React codebase
 - **Mobile** (future): React Native or Capacitor
-- **State Management**: Zustand or Redux Toolkit
-- **Video Player**: Video.js or custom HTML5 with controls
-- **UI Framework**: Tailwind CSS + shadcn/ui components
+- **State Management**: Zustand
+- **Video Player**: Custom HTML5 with multi-video synchronization
+- **UI Framework**: Mantine UI + Tailwind CSS
 
 ### Development Tools
 - **Package Management**: Poetry (Python), pnpm (JavaScript)
@@ -251,7 +253,10 @@ A local-first, multi-platform application for analyzing youth basketball game vi
 - UI overlay showing detections on video player
 
 #### 2.2 Player Identification
-- Jersey number OCR on detected player bounding boxes
+- Jersey number recognition using SmolVLM2 vision-language model
+- Legibility filtering before OCR (size, confidence thresholds)
+- Parallel OCR processing via ThreadPoolExecutor
+- Jersey aggregation with confidence-weighted voting per track
 - User interface to:
   - Review detected jersey numbers
   - Assign tracking IDs to player roster entries
@@ -447,16 +452,27 @@ basketball-video-analyzer/
 │   │   │   ├── annotations.py
 │   │   │   └── processing.py
 │   │   ├── services/               # Business logic
-│   │   │   ├── video_processor.py
-│   │   │   ├── player_detector.py
-│   │   │   ├── tracker.py
-│   │   │   ├── play_recognizer.py
-│   │   │   └── clip_generator.py
+│   │   │   ├── video_storage.py
+│   │   │   ├── thumbnail_generator.py
+│   │   │   ├── timeline_sequencer.py
+│   │   │   ├── job_manager.py
+│   │   │   ├── detection_pipeline.py
+│   │   │   ├── batch_orchestrator.py
+│   │   │   ├── batch_processor.py
+│   │   │   ├── frame_extractor.py
+│   │   │   ├── track_merger.py
+│   │   │   └── jersey_aggregator.py
 │   │   └── ml/                     # ML models
+│   │       ├── base.py             # BaseDetector interface
 │   │       ├── yolo_detector.py
-│   │       ├── tracker.py
-│   │       ├── jersey_ocr.py
-│   │       └── models/             # Pre-trained model files
+│   │       ├── rfdetr_detector.py
+│   │       ├── byte_tracker.py
+│   │       ├── norfair_tracker.py
+│   │       ├── jersey_ocr.py       # SmolVLM2-based OCR
+│   │       ├── court_detector.py
+│   │       ├── color_extractor.py
+│   │       ├── legibility_filter.py
+│   │       └── types.py
 │   ├── tests/
 │   ├── pyproject.toml
 │   └── README.md
@@ -586,11 +602,12 @@ basketball-video-analyzer/
 ### Challenge 1: Local ML Performance
 **Problem**: Running computer vision models locally on consumer hardware
 **Solution**:
-- Use lightweight models (YOLOv8-nano, ~6MB)
-- Process videos at lower FPS (sample every 2-3 frames)
-- Implement frame batching for GPU efficiency (if available)
-- Allow background processing with progress tracking
-- Cache processed results
+- Use lightweight models (YOLOv8s or RF-DETR)
+- Process videos at lower FPS (sample every 3 frames, configurable)
+- Implement batch-based processing with database checkpoints
+- Auto-detect best device (CPU/MPS/CUDA)
+- Parallel OCR processing via ThreadPoolExecutor
+- Resume capability for interrupted processing
 
 ### Challenge 2: Player Re-identification
 **Problem**: Tracking same player across different videos/games

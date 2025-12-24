@@ -29,6 +29,7 @@ from app.ml.yolo_detector import YOLODetector
 from app.models.detection import PlayerDetection
 from app.models.jersey_number import JerseyNumber
 from app.models.video import ProcessingStatus, Video
+from app.services.batch_orchestrator import OrchestratorConfig, SequentialOrchestrator
 from app.services.frame_extractor import FrameExtractor
 from app.services.track_merger import TrackMerger, TrackMergerConfig
 
@@ -780,39 +781,45 @@ class DetectionPipeline:
 async def create_detection_job_worker(job_manager):
     """Create and register a detection job worker with the job manager.
 
-    This sets up the pipeline to work with the background job system.
+    This sets up the batch-based orchestrator to work with the background job system.
+    The orchestrator checkpoints after each batch for resilience and supports resume.
     """
     from app.database import async_session_maker
     from app.services.job_manager import Job
 
     async def detection_worker(job: Job, update_progress: Callable[[int, int, str], None]):
-        """Worker function for processing video detection jobs."""
+        """Worker function for processing video detection jobs using batch orchestrator."""
         video_id = job.metadata.get("video_id")
         if not video_id:
             raise ValueError("video_id required in job metadata")
 
         async with async_session_maker() as db:
-            config = DetectionPipelineConfig(
-                sample_interval=job.metadata.get("sample_interval", 3),
-                batch_size=job.metadata.get("batch_size", 8),
+            config = OrchestratorConfig(
+                frames_per_batch=job.metadata.get(
+                    "frames_per_batch", settings.batch_frames_per_batch
+                ),
+                sample_interval=job.metadata.get("sample_interval", settings.batch_sample_interval),
                 confidence_threshold=job.metadata.get(
                     "confidence_threshold", settings.yolo_confidence_threshold
                 ),
                 max_seconds=job.metadata.get("max_seconds"),
                 enable_court_detection=job.metadata.get("enable_court_detection", True),
+                enable_jersey_ocr=job.metadata.get("enable_jersey_ocr", True),
+                enable_track_merging=job.metadata.get("enable_track_merging", True),
             )
-            pipeline = DetectionPipeline(db, config)
-            result = await pipeline.process_video(video_id, update_progress)
+            orchestrator = SequentialOrchestrator(db, config)
+            result = await orchestrator.process_video(video_id, update_progress)
 
             if result.error:
                 raise RuntimeError(result.error)
 
             return {
                 "video_id": result.video_id,
-                "total_frames_processed": result.total_frames_processed,
+                "batches_processed": result.batches_processed,
+                "total_frames_processed": result.total_frames,
                 "total_detections": result.total_detections,
-                "persons_detected": result.persons_detected,
-                "balls_detected": result.balls_detected,
+                "total_ocr_results": result.total_ocr_results,
+                "resumed_from_batch": result.resumed_from_batch,
             }
 
     job_manager.register_worker("video_detection", detection_worker)

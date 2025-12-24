@@ -45,6 +45,7 @@ class Detection:
     class_name: str
     tracking_id: int | None = None
     color_hist: np.ndarray | None = None
+    shoe_color_hist: np.ndarray | None = None
 
     @property
     def is_person(self) -> bool:
