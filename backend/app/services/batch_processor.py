@@ -16,7 +16,7 @@ from app.ml.base import BaseDetector
 from app.ml.byte_tracker import PlayerTracker
 from app.ml.color_extractor import extract_jersey_color, extract_shoe_color
 from app.ml.court_detector import CourtDetector
-from app.ml.jersey_ocr import JerseyOCR, OCRConfig, OCRResult
+from app.ml.jersey_ocr import OCRResult, read_jersey_number_thread_safe
 from app.ml.legibility_filter import LegibilityConfig, check_legibility, extract_jersey_crop
 from app.ml.norfair_tracker import NorfairTracker
 from app.ml.sam2_tracker import SAM2VideoTracker, SAM2TrackerConfig
@@ -309,18 +309,8 @@ class OCRBatchProcessor:
     def __init__(self, db: AsyncSession, config: BatchConfig) -> None:
         self._db = db
         self._config = config
-        self._jersey_ocr: JerseyOCR | None = None
         self._legibility_config = LegibilityConfig()
         self._ocr_frame_counts: dict[int, int] = {}
-
-    def _get_jersey_ocr(self) -> JerseyOCR:
-        if self._jersey_ocr is None:
-            ocr_config = OCRConfig(
-                model_name=settings.ocr_model_name,
-                device=self._config.device,
-            )
-            self._jersey_ocr = JerseyOCR(ocr_config)
-        return self._jersey_ocr
 
     def reset_ocr_state(self) -> None:
         self._ocr_frame_counts.clear()
@@ -359,8 +349,7 @@ class OCRBatchProcessor:
                 ocr_results_created=0,
             )
 
-        ocr = self._get_jersey_ocr()
-        ocr_results = await self._run_ocr_parallel(ocr, crops_to_process)
+        ocr_results = await self._run_ocr_parallel(crops_to_process)
 
         ocr_results_created = 0
         for item, ocr_result in zip(crops_to_process, ocr_results):
@@ -447,16 +436,20 @@ class OCRBatchProcessor:
 
     async def _run_ocr_parallel(
         self,
-        ocr: JerseyOCR,
         work_items: list[_OCRWorkItem],
     ) -> list[OCRResult]:
+        """Run OCR on multiple crops in parallel using thread-local model instances.
+
+        Each thread in the pool gets its own JerseyOCR instance to avoid
+        thread-safety issues with PyTorch models during concurrent inference.
+        """
         loop = asyncio.get_running_loop()
 
         ocr_start_time = time.time()
 
         with ThreadPoolExecutor(max_workers=self._config.ocr_max_workers) as executor:
             futures = [
-                loop.run_in_executor(executor, ocr.read_jersey_number, item.crop)
+                loop.run_in_executor(executor, read_jersey_number_thread_safe, item.crop)
                 for item in work_items
             ]
             results = await asyncio.gather(*futures)

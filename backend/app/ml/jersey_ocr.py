@@ -153,14 +153,54 @@ class JerseyOCR:
 
 _global_ocr: JerseyOCR | None = None
 
+# Thread-local storage for parallel OCR - each thread gets its own model instance
+# This avoids thread-safety issues with PyTorch models during concurrent inference
+_thread_local = threading.local()
+
 
 def get_jersey_ocr(config: OCRConfig | None = None) -> JerseyOCR:
+    """Get a global OCR instance (for single-threaded use only)."""
     global _global_ocr
     if _global_ocr is None:
         _global_ocr = JerseyOCR(config)
     return _global_ocr
 
 
+def get_thread_local_ocr(config: OCRConfig | None = None) -> JerseyOCR:
+    """Get a thread-local OCR instance for safe parallel inference.
+
+    Each thread gets its own JerseyOCR instance with its own model copy.
+    This allows true parallel OCR processing without thread-safety issues.
+
+    Args:
+        config: OCR configuration. Only used when creating a new instance.
+
+    Returns:
+        Thread-local JerseyOCR instance.
+    """
+    if not hasattr(_thread_local, "ocr") or _thread_local.ocr is None:
+        _thread_local.ocr = JerseyOCR(config)
+    return _thread_local.ocr
+
+
 def read_jersey_number(crop: np.ndarray, config: OCRConfig | None = None) -> OCRResult:
     ocr = get_jersey_ocr(config)
+    return ocr.read_jersey_number(crop)
+
+
+def read_jersey_number_thread_safe(
+    crop: np.ndarray, config: OCRConfig | None = None
+) -> OCRResult:
+    """Thread-safe jersey number reading using thread-local model instance.
+
+    Use this function when calling from multiple threads (e.g., ThreadPoolExecutor).
+
+    Args:
+        crop: Image crop containing jersey.
+        config: OCR configuration.
+
+    Returns:
+        OCR result with parsed jersey number.
+    """
+    ocr = get_thread_local_ocr(config)
     return ocr.read_jersey_number(crop)
