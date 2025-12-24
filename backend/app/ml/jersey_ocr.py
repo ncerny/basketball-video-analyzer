@@ -27,6 +27,11 @@ class OCRConfig:
 
 JERSEY_NUMBER_PROMPT = "What is the jersey number visible in this image? Reply with ONLY the number, nothing else. If no number is visible, reply 'none'."
 
+# Minimum crop dimensions for OCR - SmolVLM2 uses 32x32 patches
+# Crops smaller than this can't produce meaningful patches and may cause reshape errors
+MIN_CROP_WIDTH = 32
+MIN_CROP_HEIGHT = 32
+
 
 class JerseyOCR:
     _load_lock = threading.Lock()
@@ -81,6 +86,14 @@ class JerseyOCR:
 
         if crop.size == 0:
             return OCRResult(raw_text="", parsed_number=None, confidence=0.0, is_valid=False)
+
+        # Validate minimum dimensions - very small crops cause VLM reshape errors
+        if len(crop.shape) >= 2:
+            height, width = crop.shape[:2]
+            if height < MIN_CROP_HEIGHT or width < MIN_CROP_WIDTH:
+                return OCRResult(
+                    raw_text="", parsed_number=None, confidence=0.0, is_valid=False
+                )
 
         if len(crop.shape) == 3 and crop.shape[2] == 3:
             image = Image.fromarray(crop[:, :, ::-1])

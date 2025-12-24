@@ -101,6 +101,26 @@ class TestJerseyOCR:
         assert not result.is_valid
         assert result.parsed_number is None
 
+    def test_read_small_crop_rejected(self) -> None:
+        """Very small crops are rejected to avoid VLM reshape errors."""
+        ocr = JerseyOCR()
+        ocr._loaded = True
+        # Crop smaller than MIN_CROP_WIDTH x MIN_CROP_HEIGHT (32x32)
+        small_crop = np.zeros((20, 20, 3), dtype=np.uint8)
+        result = ocr.read_jersey_number(small_crop)
+        assert not result.is_valid
+        assert result.parsed_number is None
+        assert result.confidence == 0.0
+
+    def test_read_narrow_crop_rejected(self) -> None:
+        """Crops with one dimension too small are rejected."""
+        ocr = JerseyOCR()
+        ocr._loaded = True
+        # Wide but too short
+        narrow_crop = np.zeros((20, 100, 3), dtype=np.uint8)
+        result = ocr.read_jersey_number(narrow_crop)
+        assert not result.is_valid
+
     @patch("app.ml.jersey_ocr.AutoModelForImageTextToText")
     @patch("app.ml.jersey_ocr.AutoProcessor")
     def test_load_model_cpu(self, mock_processor_cls: MagicMock, mock_model_cls: MagicMock) -> None:
