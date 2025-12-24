@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     ml_models_path: str = "./models"
     ml_device: Literal["cpu", "mps", "cuda", "auto"] = "auto"
     detection_backend: Literal["yolo", "rfdetr"] = "rfdetr"
-    tracking_backend: Literal["bytetrack", "norfair"] = "norfair"
+    tracking_backend: Literal["bytetrack", "norfair", "sam2"] = "norfair"
     yolo_model_name: str = "yolov8s.pt"
     yolo_confidence_threshold: float = 0.35
     yolo_person_class_id: int = 0
@@ -59,6 +59,17 @@ class Settings(BaseSettings):
     identity_switch_window_size_frames: int = 150
     identity_switch_min_readings: int = 3
     identity_switch_threshold: float = 0.7
+
+    # SAM2 tracking settings
+    sam2_model_name: Literal[
+        "sam2_hiera_tiny",
+        "sam2_hiera_small",
+        "sam2_hiera_base_plus",
+        "sam2_hiera_large",
+    ] = "sam2_hiera_tiny"
+    sam2_new_object_iou_threshold: float = 0.3  # IOU below this = new object
+    sam2_lost_track_frames: int = 30  # Frames before dropping lost track
+    sam2_max_memory_frames: int = 30  # Limit memory bank size
 
     @property
     def models_dir(self) -> Path:

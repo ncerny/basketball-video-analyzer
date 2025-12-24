@@ -19,6 +19,7 @@ from app.ml.court_detector import CourtDetector
 from app.ml.jersey_ocr import JerseyOCR, OCRConfig, OCRResult
 from app.ml.legibility_filter import LegibilityConfig, check_legibility, extract_jersey_crop
 from app.ml.norfair_tracker import NorfairTracker
+from app.ml.sam2_tracker import SAM2VideoTracker, SAM2TrackerConfig
 from app.ml.types import BoundingBox, Detection, FrameDetections
 from app.ml.yolo_detector import YOLODetector
 from app.models.detection import PlayerDetection
@@ -74,7 +75,7 @@ class DetectionBatchProcessor:
         self._db = db
         self._config = config
         self._detector: BaseDetector | None = None
-        self._tracker: PlayerTracker | NorfairTracker | None = None
+        self._tracker: PlayerTracker | NorfairTracker | SAM2VideoTracker | None = None
         self._court_detector: CourtDetector | None = None
 
     def _get_detector(self) -> BaseDetector:
@@ -94,10 +95,19 @@ class DetectionBatchProcessor:
                 )
         return self._detector
 
-    def _get_tracker(self, fps: float) -> PlayerTracker | NorfairTracker:
+    def _get_tracker(self, fps: float) -> PlayerTracker | NorfairTracker | SAM2VideoTracker:
         if self._tracker is None:
             buffer_frames = int(self._config.tracking_buffer_seconds * fps)
-            if settings.tracking_backend == "norfair":
+            if settings.tracking_backend == "sam2":
+                config = SAM2TrackerConfig(
+                    model_name=settings.sam2_model_name,
+                    device=self._config.device,
+                    new_object_iou_threshold=settings.sam2_new_object_iou_threshold,
+                    lost_track_frames=buffer_frames,
+                    max_memory_frames=settings.sam2_max_memory_frames,
+                )
+                self._tracker = SAM2VideoTracker(config)
+            elif settings.tracking_backend == "norfair":
                 self._tracker = NorfairTracker(
                     distance_threshold=250.0,
                     hit_counter_max=buffer_frames,
@@ -162,7 +172,13 @@ class DetectionBatchProcessor:
             person_detections = self._extract_colors(person_detections, frame)
 
             if tracker:
-                person_detections = await asyncio.to_thread(tracker.update, person_detections)
+                # SAM2 requires frame images for appearance-based tracking
+                if isinstance(tracker, SAM2VideoTracker):
+                    person_detections = await asyncio.to_thread(
+                        tracker.update, person_detections, frame
+                    )
+                else:
+                    person_detections = await asyncio.to_thread(tracker.update, person_detections)
 
             if court_detector:
                 person_detections = await asyncio.to_thread(
