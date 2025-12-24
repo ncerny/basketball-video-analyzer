@@ -816,6 +816,7 @@ async def create_detection_job_worker(job_manager):
             raise ValueError("video_id required in job metadata")
 
         async with async_session_maker() as db:
+            resolved_device = SequentialOrchestrator._resolve_device(settings.ml_device)
             config = OrchestratorConfig(
                 frames_per_batch=job.metadata.get(
                     "frames_per_batch", settings.batch_frames_per_batch
@@ -824,11 +825,13 @@ async def create_detection_job_worker(job_manager):
                 confidence_threshold=job.metadata.get(
                     "confidence_threshold", settings.yolo_confidence_threshold
                 ),
+                device=resolved_device,
                 max_seconds=job.metadata.get("max_seconds"),
                 enable_court_detection=job.metadata.get("enable_court_detection", True),
                 enable_jersey_ocr=job.metadata.get("enable_jersey_ocr", True),
                 enable_track_merging=job.metadata.get("enable_track_merging", True),
             )
+            logger.info(f"Starting detection job for video {video_id} on device: {resolved_device}")
             orchestrator = SequentialOrchestrator(db, config)
             result = await orchestrator.process_video(video_id, update_progress)
 
