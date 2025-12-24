@@ -190,13 +190,12 @@ class DetectionPipeline:
             buffer_frames = int(self._config.tracking_buffer_seconds * fps)
 
             if settings.tracking_backend == "sam2":
-                logger.info("Using SAM2 tracking backend (appearance memory)")
+                logger.info("Using SAM2 tracking backend (mask-based)")
                 config = SAM2TrackerConfig(
                     model_name=settings.sam2_model_name,
                     device=self._config.device,
-                    new_object_iou_threshold=settings.sam2_new_object_iou_threshold,
+                    min_iou_threshold=settings.sam2_new_object_iou_threshold,
                     lost_track_frames=buffer_frames,
-                    max_memory_frames=settings.sam2_max_memory_frames,
                 )
                 self._tracker = SAM2VideoTracker(config)
             elif settings.tracking_backend == "norfair":
