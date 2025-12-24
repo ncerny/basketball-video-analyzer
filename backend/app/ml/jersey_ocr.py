@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import logging
 import re
 import threading
 from typing import TYPE_CHECKING
@@ -8,6 +9,8 @@ from PIL import Image
 
 if TYPE_CHECKING:
     from transformers import AutoModelForImageTextToText, AutoProcessor
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -100,36 +103,47 @@ class JerseyOCR:
         else:
             image = Image.fromarray(crop)
 
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image", "image": image},
-                    {"type": "text", "text": JERSEY_NUMBER_PROMPT},
-                ],
-            }
-        ]
+        try:
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": image},
+                        {"type": "text", "text": JERSEY_NUMBER_PROMPT},
+                    ],
+                }
+            ]
 
-        prompt = self._processor.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-        )
+            prompt = self._processor.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
 
-        inputs = self._processor(
-            text=prompt,
-            images=[image],
-            return_tensors="pt",
-        )
-        inputs = inputs.to(self._device)
+            inputs = self._processor(
+                text=prompt,
+                images=[image],
+                return_tensors="pt",
+            )
+            inputs = inputs.to(self._device)
 
-        outputs = self._model.generate(
-            **inputs,
-            max_new_tokens=self._config.max_new_tokens,
-            do_sample=False,
-        )
+            outputs = self._model.generate(
+                **inputs,
+                max_new_tokens=self._config.max_new_tokens,
+                do_sample=False,
+            )
 
-        generated_ids = outputs[0][inputs["input_ids"].shape[1] :]
-        raw_text = self._processor.decode(generated_ids, skip_special_tokens=True)
-        raw_text = raw_text.strip()
+            generated_ids = outputs[0][inputs["input_ids"].shape[1] :]
+            raw_text = self._processor.decode(generated_ids, skip_special_tokens=True)
+            raw_text = raw_text.strip()
+
+        except Exception as e:
+            # MPS and concurrent VLM inference can cause shape mismatches
+            # Log and return invalid result instead of crashing the pipeline
+            logger.warning(
+                f"OCR inference failed for crop {crop.shape}: {type(e).__name__}: {e}"
+            )
+            return OCRResult(
+                raw_text="", parsed_number=None, confidence=0.0, is_valid=False
+            )
 
         parsed_number, confidence, is_valid = self._parse_jersey_number(raw_text)
 

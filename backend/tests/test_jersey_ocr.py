@@ -242,3 +242,25 @@ class TestJerseyOCR:
 
         assert result.parsed_number == 45
         assert result.is_valid
+
+    def test_inference_error_returns_invalid_result(self) -> None:
+        """Model errors during inference return invalid result instead of raising."""
+        ocr = JerseyOCR()
+
+        ocr._loaded = True
+        ocr._device = "cpu"
+        ocr._processor = MagicMock()
+        ocr._model = MagicMock()
+
+        # Simulate an error during inference
+        ocr._processor.apply_chat_template.side_effect = RuntimeError(
+            "shape mismatch: indexing tensors could not be broadcast"
+        )
+
+        crop = np.zeros((100, 100, 3), dtype=np.uint8)
+        result = ocr.read_jersey_number(crop)
+
+        # Should return invalid result instead of raising
+        assert not result.is_valid
+        assert result.parsed_number is None
+        assert result.confidence == 0.0
