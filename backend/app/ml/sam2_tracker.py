@@ -19,6 +19,7 @@ import numpy as np
 
 from app.config import settings
 
+from .color_extractor import extract_jersey_color
 from .types import BoundingBox, Detection, FrameDetections
 
 logger = logging.getLogger(__name__)
@@ -92,7 +93,7 @@ class SAM2TrackerConfig:
     min_mask_area: int = 100  # Minimum mask area to consider valid
 
     # Embedding-based re-identification
-    embedding_similarity_threshold: float = 0.5  # Min cosine similarity for match
+    embedding_similarity_threshold: float = 0.35  # Min cosine similarity for re-ID
     color_tiebreaker_threshold: float = 0.15  # Use color when scores within this
     reidentification_enabled: bool = True  # Enable embedding-based re-ID
 
@@ -258,8 +259,9 @@ class SAM2VideoTracker:
         detection_embeddings = self._extract_embeddings_batch(frame_detections, detection_masks)
 
         # Match detections to existing tracks using embeddings + IOU + color
+        # Pass frame for mask-based color extraction
         matched_detections = self._match_and_update_tracks(
-            frame_detections, detection_masks, detection_embeddings
+            frame_detections, detection_masks, detection_embeddings, frame
         )
 
         # Clean up lost tracks
@@ -471,6 +473,7 @@ class SAM2VideoTracker:
         frame_detections: FrameDetections,
         detection_masks: list[np.ndarray | None],
         detection_embeddings: list[np.ndarray | None],
+        frame: np.ndarray,
     ) -> FrameDetections:
         """Match detections to existing tracks using embeddings, IOU, and color.
 
@@ -483,6 +486,7 @@ class SAM2VideoTracker:
             frame_detections: New detections.
             detection_masks: Corresponding SAM2 masks.
             detection_embeddings: Feature embeddings for each detection.
+            frame: BGR frame image for mask-based color extraction.
 
         Returns:
             FrameDetections with tracking IDs assigned.
@@ -494,7 +498,16 @@ class SAM2VideoTracker:
             det_mask = detection_masks[i] if i < len(detection_masks) else None
             det_embedding = detection_embeddings[i] if i < len(detection_embeddings) else None
             det_bbox = det.bbox
-            det_color = det.color_hist
+
+            # Extract color histogram using SAM2 mask (excludes background)
+            det_color = extract_jersey_color(
+                frame,
+                det_bbox.x,
+                det_bbox.y,
+                det_bbox.width,
+                det_bbox.height,
+                mask=det_mask,
+            )
 
             best_track_id = None
             best_score = 0.0
@@ -577,15 +590,24 @@ class SAM2VideoTracker:
                 else self._config.min_iou_threshold
             )
 
-            # Debug logging for tracking decisions
-            if best_track_id is not None and best_score > 0:
-                logger.debug(
-                    f"Frame {self._frame_count}: Detection {i} best match: "
-                    f"track {best_track_id} score={best_score:.3f} (threshold={threshold:.3f}), "
-                    f"has_embedding={det_embedding is not None}"
+            # Enhanced debug logging for tracking decisions
+            will_match = best_score >= threshold and best_track_id is not None
+            if best_track_id is not None:
+                best_track = self._tracks[best_track_id]
+                frames_gap = self._frame_count - best_track.last_seen_frame
+                logger.info(
+                    f"Frame {self._frame_count}: Det {i} -> "
+                    f"{'MATCH track ' + str(best_track_id) if will_match else 'NEW TRACK'} | "
+                    f"score={best_score:.3f} vs thresh={threshold:.3f} | "
+                    f"gap={frames_gap}f | "
+                    f"2nd_best={second_best_track_id}:{second_best_score:.3f}"
+                )
+            else:
+                logger.info(
+                    f"Frame {self._frame_count}: Det {i} -> NEW TRACK (no candidates)"
                 )
 
-            if best_score >= threshold and best_track_id is not None:
+            if will_match:
                 track_id = best_track_id
                 used_track_ids.add(track_id)
                 # Update existing track
@@ -599,16 +621,23 @@ class SAM2VideoTracker:
                     if track.embedding is None:
                         track.embedding = det_embedding
                     else:
-                        # Blend new embedding with history (favor recent)
-                        alpha = 0.7
+                        # Blend new embedding with history (favor history for stability)
+                        alpha = 0.3  # Lower = more stable, less drift
                         track.embedding = alpha * det_embedding + (1 - alpha) * track.embedding
                         # Re-normalize
                         norm = np.linalg.norm(track.embedding)
                         if norm > 0:
                             track.embedding = track.embedding / norm
-                # Update color histogram
+                # Update color histogram with EMA (for stability)
                 if det_color is not None:
-                    track.color_hist = det_color
+                    if track.color_hist is None:
+                        track.color_hist = det_color
+                    else:
+                        alpha = 0.3  # Same stability as embeddings
+                        track.color_hist = alpha * det_color + (1 - alpha) * track.color_hist
+                        norm = np.linalg.norm(track.color_hist)
+                        if norm > 0:
+                            track.color_hist = track.color_hist / norm
             else:
                 # Create new track
                 track_id = self._next_track_id
@@ -635,8 +664,8 @@ class SAM2VideoTracker:
                     class_id=det.class_id,
                     class_name=det.class_name,
                     tracking_id=track_id,
-                    color_hist=det.color_hist,
-                    shoe_color_hist=det.shoe_color_hist,
+                    color_hist=det_color,  # Use mask-based color histogram
+                    shoe_color_hist=det_color,  # Same as color_hist (full body)
                 )
             )
 

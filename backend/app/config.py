@@ -73,7 +73,7 @@ class Settings(BaseSettings):
     sam2_auto_download: bool = True  # Auto-download missing checkpoints
 
     # SAM2 embedding-based re-identification
-    sam2_embedding_similarity_threshold: float = 0.5  # Min cosine similarity for match
+    sam2_embedding_similarity_threshold: float = 0.35  # Min cosine similarity for re-ID (lowered for better matching)
     sam2_color_tiebreaker_threshold: float = 0.15  # Use color when embedding scores within this
     sam2_reidentification_enabled: bool = True  # Enable embedding-based re-ID
 

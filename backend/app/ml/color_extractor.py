@@ -5,11 +5,25 @@ import numpy as np
 
 
 def extract_jersey_color(
-    frame: np.ndarray, bbox_x: float, bbox_y: float, bbox_width: float, bbox_height: float
+    frame: np.ndarray,
+    bbox_x: float,
+    bbox_y: float,
+    bbox_width: float,
+    bbox_height: float,
+    mask: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Extract HSV color histogram from upper portion of player bbox (jersey area).
+    """Extract HSV color histogram from player bbox, optionally masked.
 
-    Returns a normalized 48-bin histogram (16 hue + 16 saturation + 16 value).
+    Args:
+        frame: BGR image.
+        bbox_x, bbox_y, bbox_width, bbox_height: Bounding box coordinates.
+        mask: Optional boolean mask (same size as frame). If provided, only
+              pixels where mask is True are included in histogram.
+
+    Returns:
+        Normalized 48-bin histogram (16 hue + 16 saturation + 16 value).
+        Using full body captures jersey, shorts, skin tone, and shoes for better
+        individual player discrimination while maintaining team clustering.
     """
     x1 = max(0, int(bbox_x))
     y1 = max(0, int(bbox_y))
@@ -19,17 +33,26 @@ def extract_jersey_color(
     if x2 <= x1 or y2 <= y1:
         return np.zeros(48, dtype=np.float32)
 
-    jersey_y2 = y1 + int((y2 - y1) * 0.5)
-    crop = frame[y1:jersey_y2, x1:x2]
+    # Crop frame to bbox
+    crop = frame[y1:y2, x1:x2]
 
     if crop.size == 0:
         return np.zeros(48, dtype=np.float32)
 
+    # Crop mask to bbox if provided
+    mask_crop = None
+    if mask is not None:
+        mask_crop = mask[y1:y2, x1:x2].astype(np.uint8)
+        # Check if mask has any valid pixels
+        if mask_crop.sum() == 0:
+            return np.zeros(48, dtype=np.float32)
+
     hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
 
-    h_hist = cv2.calcHist([hsv], [0], None, [16], [0, 180])
-    s_hist = cv2.calcHist([hsv], [1], None, [16], [0, 256])
-    v_hist = cv2.calcHist([hsv], [2], None, [16], [0, 256])
+    # Use mask_crop for histogram calculation (None means use all pixels)
+    h_hist = cv2.calcHist([hsv], [0], mask_crop, [16], [0, 180])
+    s_hist = cv2.calcHist([hsv], [1], mask_crop, [16], [0, 256])
+    v_hist = cv2.calcHist([hsv], [2], mask_crop, [16], [0, 256])
 
     hist = np.concatenate([h_hist, s_hist, v_hist]).flatten()
 
@@ -41,41 +64,19 @@ def extract_jersey_color(
 
 
 def extract_shoe_color(
-    frame: np.ndarray, bbox_x: float, bbox_y: float, bbox_width: float, bbox_height: float
+    frame: np.ndarray,
+    bbox_x: float,
+    bbox_y: float,
+    bbox_width: float,
+    bbox_height: float,
+    mask: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Extract HSV color histogram from lower portion of player bbox (shoe area).
+    """Extract HSV color histogram from full player bbox, optionally masked.
 
-    Extracts from bottom 20% of the bounding box where shoes are typically visible.
-    Returns a normalized 48-bin histogram (16 hue + 16 saturation + 16 value).
+    NOTE: Now uses full body (same as extract_jersey_color) for better
+    player discrimination. Kept as separate function for API compatibility.
     """
-    x1 = max(0, int(bbox_x))
-    y1 = max(0, int(bbox_y))
-    x2 = min(frame.shape[1], int(bbox_x + bbox_width))
-    y2 = min(frame.shape[0], int(bbox_y + bbox_height))
-
-    if x2 <= x1 or y2 <= y1:
-        return np.zeros(48, dtype=np.float32)
-
-    # Extract bottom 20% of bbox (shoe area)
-    shoe_y1 = y1 + int((y2 - y1) * 0.8)
-    crop = frame[shoe_y1:y2, x1:x2]
-
-    if crop.size == 0:
-        return np.zeros(48, dtype=np.float32)
-
-    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
-
-    h_hist = cv2.calcHist([hsv], [0], None, [16], [0, 180])
-    s_hist = cv2.calcHist([hsv], [1], None, [16], [0, 256])
-    v_hist = cv2.calcHist([hsv], [2], None, [16], [0, 256])
-
-    hist = np.concatenate([h_hist, s_hist, v_hist]).flatten()
-
-    norm = np.linalg.norm(hist)
-    if norm > 0:
-        hist = hist / norm
-
-    return hist.astype(np.float32)
+    return extract_jersey_color(frame, bbox_x, bbox_y, bbox_width, bbox_height, mask)
 
 
 def extract_combined_colors(

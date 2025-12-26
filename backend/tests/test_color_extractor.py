@@ -17,7 +17,8 @@ class TestExtractJerseyColor:
         assert hist.shape == (48,)
         assert hist.dtype == np.float32
 
-    def test_extracts_upper_half(self):
+    def test_extracts_full_body(self):
+        """Extracts color histogram from full body bbox."""
         frame = np.zeros((200, 100, 3), dtype=np.uint8)
         frame[:100, :, :] = [0, 255, 0]
         frame[100:, :, :] = [255, 0, 0]
@@ -48,7 +49,8 @@ class TestExtractShoeColor:
         assert hist.shape == (48,)
         assert hist.dtype == np.float32
 
-    def test_extracts_bottom_20_percent(self):
+    def test_extracts_full_body_same_as_jersey(self):
+        """Both extract_shoe_color and extract_jersey_color now use full body."""
         frame = np.zeros((200, 100, 3), dtype=np.uint8)
         frame[:160, :, :] = [0, 255, 0]
         frame[160:, :, :] = [255, 0, 0]
@@ -56,7 +58,8 @@ class TestExtractShoeColor:
         hist_shoe = extract_shoe_color(frame, 0, 0, 100, 200)
         hist_jersey = extract_jersey_color(frame, 0, 0, 100, 200)
 
-        assert not np.allclose(hist_shoe, hist_jersey)
+        # Now both should return the same full-body histogram
+        assert np.allclose(hist_shoe, hist_jersey)
 
     def test_empty_bbox_returns_zeros(self):
         frame = np.random.randint(0, 255, (200, 100, 3), dtype=np.uint8)
@@ -71,12 +74,13 @@ class TestExtractShoeColor:
         norm = np.linalg.norm(hist)
         assert abs(norm - 1.0) < 1e-5 or norm == 0
 
-    def test_different_shoe_colors_produce_different_histograms(self):
+    def test_different_body_colors_produce_different_histograms(self):
+        """Different full-body colors should produce different histograms."""
         frame1 = np.zeros((200, 100, 3), dtype=np.uint8)
-        frame1[160:, :, :] = [255, 0, 0]
+        frame1[:, :, :] = [255, 0, 0]  # All red
 
         frame2 = np.zeros((200, 100, 3), dtype=np.uint8)
-        frame2[160:, :, :] = [0, 0, 255]
+        frame2[:, :, :] = [0, 0, 255]  # All blue
 
         hist1 = extract_shoe_color(frame1, 0, 0, 100, 200)
         hist2 = extract_shoe_color(frame2, 0, 0, 100, 200)
@@ -94,15 +98,78 @@ class TestExtractCombinedColors:
         assert jersey_hist.shape == (48,)
         assert shoe_hist.shape == (48,)
 
-    def test_jersey_and_shoe_are_different(self):
+    def test_jersey_and_shoe_are_same_full_body(self):
+        """Both now extract full body, so they should be identical."""
         frame = np.zeros((200, 100, 3), dtype=np.uint8)
         frame[:100, :, :] = [0, 255, 0]
         frame[160:, :, :] = [255, 0, 0]
 
         jersey_hist, shoe_hist = extract_combined_colors(frame, 0, 0, 100, 200)
 
-        similarity = color_similarity(jersey_hist, shoe_hist)
-        assert similarity < 0.9
+        # Both now use full body, so they should be identical
+        assert np.allclose(jersey_hist, shoe_hist)
+
+
+class TestMaskedColorExtraction:
+    def test_mask_excludes_background(self):
+        """Mask should exclude background pixels from histogram."""
+        # Frame: left half red, right half blue
+        frame = np.zeros((100, 100, 3), dtype=np.uint8)
+        frame[:, :50, :] = [0, 0, 255]  # Red (BGR)
+        frame[:, 50:, :] = [255, 0, 0]  # Blue (BGR)
+
+        # Mask only includes left half (red region)
+        mask = np.zeros((100, 100), dtype=bool)
+        mask[:, :50] = True
+
+        # Without mask: includes both red and blue
+        hist_no_mask = extract_jersey_color(frame, 0, 0, 100, 100)
+
+        # With mask: only includes red
+        hist_masked = extract_jersey_color(frame, 0, 0, 100, 100, mask=mask)
+
+        # Histograms should be different
+        assert not np.allclose(hist_no_mask, hist_masked)
+
+    def test_mask_only_foreground_pixels(self):
+        """With mask, only foreground pixels contribute to histogram."""
+        # Frame: all green background with red player
+        frame = np.zeros((100, 100, 3), dtype=np.uint8)
+        frame[:, :, :] = [0, 255, 0]  # Green background (BGR)
+        frame[25:75, 25:75, :] = [0, 0, 255]  # Red player center (BGR)
+
+        # Mask only includes player region
+        mask = np.zeros((100, 100), dtype=bool)
+        mask[25:75, 25:75] = True
+
+        # Pure red player crop (no background)
+        pure_red = np.zeros((50, 50, 3), dtype=np.uint8)
+        pure_red[:, :, :] = [0, 0, 255]
+
+        hist_masked = extract_jersey_color(frame, 0, 0, 100, 100, mask=mask)
+        hist_pure_red = extract_jersey_color(pure_red, 0, 0, 50, 50)
+
+        # Masked histogram should match pure red histogram
+        assert np.allclose(hist_masked, hist_pure_red, atol=0.01)
+
+    def test_empty_mask_returns_zeros(self):
+        """Empty mask (no foreground) should return zero histogram."""
+        frame = np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
+        mask = np.zeros((100, 100), dtype=bool)  # All False
+
+        hist = extract_jersey_color(frame, 0, 0, 100, 100, mask=mask)
+
+        assert np.all(hist == 0)
+
+    def test_full_mask_same_as_no_mask(self):
+        """Full mask (all foreground) should match no mask."""
+        frame = np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
+        mask = np.ones((100, 100), dtype=bool)  # All True
+
+        hist_no_mask = extract_jersey_color(frame, 0, 0, 100, 100)
+        hist_full_mask = extract_jersey_color(frame, 0, 0, 100, 100, mask=mask)
+
+        assert np.allclose(hist_no_mask, hist_full_mask)
 
 
 class TestColorSimilarity:
