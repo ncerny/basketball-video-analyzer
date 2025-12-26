@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     enable_inference_timing: bool = False
 
     # OCR settings
-    enable_jersey_ocr: bool = True
+    enable_jersey_ocr: bool = False  # Disabled while improving tracking
     ocr_sample_rate: int = 10
     ocr_model_name: str = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
     ocr_max_workers: int = 4
@@ -68,8 +68,14 @@ class Settings(BaseSettings):
         "sam2_hiera_large",
     ] = "sam2_hiera_tiny"
     sam2_new_object_iou_threshold: float = 0.3  # IOU below this = new object
-    sam2_lost_track_frames: int = 30  # Frames before dropping lost track
+    sam2_lost_track_frames: int = 0  # 0 = keep tracks for entire video (no cleanup)
     sam2_max_memory_frames: int = 30  # Limit memory bank size
+    sam2_auto_download: bool = True  # Auto-download missing checkpoints
+
+    # SAM2 embedding-based re-identification
+    sam2_embedding_similarity_threshold: float = 0.5  # Min cosine similarity for match
+    sam2_color_tiebreaker_threshold: float = 0.15  # Use color when embedding scores within this
+    sam2_reidentification_enabled: bool = True  # Enable embedding-based re-ID
 
     @property
     def models_dir(self) -> Path:

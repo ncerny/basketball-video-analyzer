@@ -72,7 +72,8 @@ Computer vision and machine learning components.
 | `yolo_detector.py` | YOLOv8 object detection |
 | `rfdetr_detector.py` | RF-DETR object detection (default) |
 | `byte_tracker.py` | ByteTrack multi-object tracking |
-| `norfair_tracker.py` | Norfair tracking (default) |
+| `norfair_tracker.py` | Norfair tracking |
+| `sam2_tracker.py` | SAM2 embedding-based tracking (default) |
 | `jersey_ocr.py` | SmolVLM2 vision-language model for jersey numbers |
 | `court_detector.py` | Color-based court segmentation |
 | `color_extractor.py` | Jersey color histogram extraction |
@@ -105,7 +106,8 @@ The detection pipeline processes video frames through multiple stages.
 
 # Tracking backends (config.tracking_backend)
 "bytetrack" # ByteTrack - robust to occlusion
-"norfair"   # Norfair - simpler, good defaults (default)
+"norfair"   # Norfair - simpler, good defaults
+"sam2"      # SAM2 - embedding-based re-identification (default)
 
 # Device selection (config.ml_device)
 "auto"  # Auto-detect best available (default)
@@ -113,6 +115,34 @@ The detection pipeline processes video frames through multiple stages.
 "mps"   # Apple Silicon GPU
 "cuda"  # NVIDIA GPU
 ```
+
+### SAM2 Tracking Architecture
+
+The SAM2 tracker uses a two-tier embedding architecture for robust player re-identification:
+
+![SAM2 Tracking](./diagrams/sam2-tracking.svg)
+
+*[View Mermaid source](./diagrams/sam2-tracking.mmd)*
+
+#### Tier 1: In-Memory Track State
+
+During video processing, each track maintains:
+- **Embedding vector**: Extracted from SAM2's image encoder (~256-512 dims)
+- **Color histogram**: Jersey/shoe colors for tiebreaking
+- **Last mask/bbox**: For spatial consistency checks
+
+Matching uses embedding cosine similarity as primary signal, with color as tiebreaker when scores are close.
+
+#### Tier 2: Database Persistence
+
+At video end, best embeddings are stored in `player_embeddings` table:
+- Enables cross-video re-identification within a game
+- Links to player records for cross-game identity
+- Loaded at video start for immediate matching
+
+#### Future: Video Predictor Mode
+
+SAM2's Video Predictor offers built-in memory and mask propagation but requires frames saved to disk as JPEGs. Could be added as post-processing refinement step for offline batch processing.
 
 ## Batch Processing Pipeline
 
@@ -239,6 +269,17 @@ ENABLE_JERSEY_OCR=true
 OCR_SAMPLE_RATE=10                # Run OCR every N frames per track
 OCR_MODEL_NAME=HuggingFaceTB/SmolVLM2-500M-Video-Instruct
 OCR_MAX_WORKERS=4
+```
+
+### SAM2 Tracking Settings
+
+```bash
+SAM2_MODEL_NAME=sam2_hiera_small  # tiny, small, base_plus, large
+SAM2_NEW_OBJECT_IOU_THRESHOLD=0.3
+SAM2_LOST_TRACK_FRAMES=60
+SAM2_EMBEDDING_SIMILARITY_THRESHOLD=0.7
+SAM2_COLOR_TIEBREAKER_THRESHOLD=0.1
+SAM2_REIDENTIFICATION_ENABLED=true
 ```
 
 ### Batch Processing

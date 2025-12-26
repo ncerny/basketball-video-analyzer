@@ -62,6 +62,7 @@ class SequentialOrchestrator:
         self._config = config or OrchestratorConfig(
             confidence_threshold=settings.yolo_confidence_threshold,
             device=self._resolve_device(settings.ml_device),
+            enable_jersey_ocr=settings.enable_jersey_ocr,
         )
         self._video_storage_path = Path(settings.video_storage_path)
 

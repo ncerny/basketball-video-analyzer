@@ -122,6 +122,7 @@ class DetectionPipeline:
             confidence_threshold=settings.yolo_confidence_threshold,
             device=resolved_device,
             batch_size=optimal_batch_size,
+            enable_jersey_ocr=settings.enable_jersey_ocr,
         )
 
         # Log device and batch size configuration

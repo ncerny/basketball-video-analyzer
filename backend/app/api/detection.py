@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
 from app.models.detection import PlayerDetection
 from app.models.video import Video as VideoModel
@@ -83,6 +84,7 @@ async def start_detection(
             "confidence_threshold": params.confidence_threshold,
             "max_seconds": params.max_seconds,
             "enable_court_detection": params.enable_court_detection,
+            "enable_jersey_ocr": settings.enable_jersey_ocr,
         },
     )
 

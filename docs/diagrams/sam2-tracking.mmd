@@ -1,0 +1,44 @@
+graph TB
+    subgraph "Frame Processing"
+        A[New Frame] --> B[SAM2 Image Predictor]
+        B --> C[Generate Masks]
+        B --> D[Extract Embeddings]
+    end
+
+    subgraph "Tier 1: In-Memory Track State"
+        E[Active Tracks]
+        E --> |"embedding vector"| F[Embedding Store]
+        E --> |"color histogram"| G[Color Store]
+        E --> |"last mask/bbox"| H[Spatial Store]
+    end
+
+    subgraph "Matching Pipeline"
+        D --> I{Cosine Similarity}
+        I --> |"best match"| J{Score Difference < 0.1?}
+        J --> |"yes"| K[Color Tiebreaker]
+        J --> |"no"| L[Use Best Match]
+        K --> L
+        I --> |"no match > threshold"| M{Check Database}
+        M --> |"match found"| N[Re-identify Track]
+        M --> |"no match"| O[Create New Track]
+    end
+
+    subgraph "Tier 2: Database Persistence"
+        P[(player_embeddings)]
+        Q[(players)]
+        P --> |"links to"| Q
+    end
+
+    C --> E
+    D --> I
+    L --> E
+    N --> E
+    O --> E
+
+    E --> |"video end"| P
+    P --> |"video start"| M
+
+    style A fill:#e1f5fe
+    style B fill:#fff3e0
+    style P fill:#e8f5e9
+    style Q fill:#e8f5e9
