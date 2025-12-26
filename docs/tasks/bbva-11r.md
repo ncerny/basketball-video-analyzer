@@ -103,16 +103,21 @@ Store high-quality masks at key moments:
 
 ## Bug Fixes Applied
 
-1. **SAM2.1 vs SAM2 checkpoint compatibility** - SAM2.1 checkpoints (092824) incompatible with installed library. Switched to SAM2 (072824) URLs.
+1. **Upgraded to official Meta SAM2 package with SAM 2.1** - Replaced unofficial `sam2` fork with official `SAM-2` package from GitHub. SAM 2.1 provides:
+   - Better handling of visually similar objects (like players in similar jerseys)
+   - Improved occlusion handling
+   - Better memory attention mechanisms
 
-2. **OCR not respecting `enable_jersey_ocr` setting** - Fixed in multiple places:
+2. **SAM 2.1 `_orig_hw` structure change** - Official SAM2 stores `_orig_hw` as a list `[(H, W)]` not a tuple `(H, W)`. Fixed embedding extraction to access `_orig_hw[0]` first.
+
+3. **OCR not respecting `enable_jersey_ocr` setting** - Fixed in multiple places:
    - `app/api/detection.py` - Added to job metadata
    - `app/services/batch_orchestrator.py` - Read from settings
    - `app/services/detection_pipeline.py` - Read from settings
 
-3. **SAM2TrackerConfig defaults mismatch** - Synced dataclass defaults with global `sam2_*` settings.
+4. **SAM2TrackerConfig defaults mismatch** - Synced dataclass defaults with global `sam2_*` settings.
 
-4. **Tracks deleted too quickly** - Changed `lost_track_frames` from 30 to 0 (keep all tracks for entire video).
+5. **Tracks deleted too quickly** - Changed `lost_track_frames` from 30 to 0 (keep all tracks for entire video).
 
 ## Debug Logging Added
 

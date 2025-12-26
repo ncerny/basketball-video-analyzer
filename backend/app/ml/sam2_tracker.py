@@ -23,14 +23,14 @@ from .types import BoundingBox, Detection, FrameDetections
 
 logger = logging.getLogger(__name__)
 
-# SAM2 checkpoint download URLs from Meta (072824 release)
-# Note: SAM2.1 (092824) requires updated library. Using SAM2 for compatibility.
+# SAM 2.1 checkpoint download URLs from Meta (092824 release)
+# SAM 2.1 has improved occlusion handling and better tracking of similar objects
 # Source: https://github.com/facebookresearch/sam2
 SAM2_CHECKPOINT_URLS = {
-    "sam2_hiera_tiny": "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_tiny.pt",
-    "sam2_hiera_small": "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_small.pt",
-    "sam2_hiera_base_plus": "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_base_plus.pt",
-    "sam2_hiera_large": "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_large.pt",
+    "sam2_hiera_tiny": "https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_tiny.pt",
+    "sam2_hiera_small": "https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_small.pt",
+    "sam2_hiera_base_plus": "https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_base_plus.pt",
+    "sam2_hiera_large": "https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt",
 }
 
 
@@ -168,11 +168,12 @@ class SAM2VideoTracker:
             from sam2.sam2_image_predictor import SAM2ImagePredictor
 
             # Map model name to config file
+            # SAM 2.1 config files (in sam2.1/ subdirectory)
             model_configs = {
-                "sam2_hiera_tiny": "sam2_hiera_t.yaml",
-                "sam2_hiera_small": "sam2_hiera_s.yaml",
-                "sam2_hiera_base_plus": "sam2_hiera_b+.yaml",
-                "sam2_hiera_large": "sam2_hiera_l.yaml",
+                "sam2_hiera_tiny": "configs/sam2.1/sam2.1_hiera_t.yaml",
+                "sam2_hiera_small": "configs/sam2.1/sam2.1_hiera_s.yaml",
+                "sam2_hiera_base_plus": "configs/sam2.1/sam2.1_hiera_b+.yaml",
+                "sam2_hiera_large": "configs/sam2.1/sam2.1_hiera_l.yaml",
             }
 
             config_name = model_configs.get(self._config.model_name)
@@ -379,8 +380,10 @@ class SAM2VideoTracker:
                     x1, y1, x2, y2 = det.bbox.to_xyxy()
 
                     # Scale bbox to feature map coordinates
-                    scale_x = feat_w / self._predictor._orig_hw[1]
-                    scale_y = feat_h / self._predictor._orig_hw[0]
+                    # _orig_hw is a list of (H, W) tuples - we need the first element
+                    orig_hw = self._predictor._orig_hw[0]
+                    scale_x = feat_w / orig_hw[1]  # width
+                    scale_y = feat_h / orig_hw[0]  # height
 
                     fx1 = max(0, int(x1 * scale_x))
                     fy1 = max(0, int(y1 * scale_y))
