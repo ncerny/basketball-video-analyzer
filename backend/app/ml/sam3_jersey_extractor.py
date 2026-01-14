@@ -38,12 +38,16 @@ def extract_jersey_crop(
     x2 = min(frame.shape[1], x2)
     jersey_y2 = min(frame.shape[0], jersey_y2)
 
+    # Validate dimensions after clamping
+    if x2 <= x1 or jersey_y2 <= y1:
+        return np.zeros((0, 0, 3), dtype=np.uint8)
+
     # Extract crop
     crop = frame[y1:jersey_y2, x1:x2].copy()
 
     # Apply mask if provided
     if mask is not None:
-        crop_mask = mask[y1:jersey_y2, x1:x2]
+        crop_mask = mask[y1:jersey_y2, x1:x2].astype(bool)
         # Zero out background pixels
         crop[~crop_mask] = 0
 
