@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     ml_models_path: str = "./models"
     ml_device: Literal["cpu", "mps", "cuda", "auto"] = "auto"
     detection_backend: Literal["yolo", "rfdetr"] = "rfdetr"
-    tracking_backend: Literal["bytetrack", "norfair", "sam2"] = "norfair"
+    tracking_backend: Literal["bytetrack", "norfair", "sam2", "sam3"] = "norfair"
     yolo_model_name: str = "yolov8s.pt"
     yolo_confidence_threshold: float = 0.35
     yolo_person_class_id: int = 0
@@ -76,6 +76,12 @@ class Settings(BaseSettings):
     sam2_embedding_similarity_threshold: float = 0.35  # Min cosine similarity for re-ID (lowered for better matching)
     sam2_color_tiebreaker_threshold: float = 0.15  # Use color when embedding scores within this
     sam2_reidentification_enabled: bool = True  # Enable embedding-based re-ID
+
+    # SAM3 tracking settings
+    sam3_prompt: str = "basketball player"
+    sam3_confidence_threshold: float = 0.25
+    sam3_use_half_precision: bool = True
+    sam3_temp_frames_dir: Path = Path("/tmp/sam3_frames")
 
     @property
     def models_dir(self) -> Path:
