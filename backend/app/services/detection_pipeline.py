@@ -822,15 +822,7 @@ async def create_detection_job_worker(job_manager):
         async with async_session_maker() as db:
             # Use SAM3 pipeline when sam3 backend is selected
             if settings.tracking_backend == "sam3":
-                from pathlib import Path
-
-                from sqlalchemy import delete
-                from sqlalchemy.future import select
-
-                from app.models.detection import PlayerDetection
-                from app.models.jersey_number import JerseyNumber
                 from app.models.processing_batch import ProcessingBatch
-                from app.models.video import ProcessingStatus, Video
                 from app.services.sam3_detection_pipeline import SAM3DetectionPipeline
 
                 # Get video path
@@ -876,15 +868,22 @@ async def create_detection_job_worker(job_manager):
                     on_progress=on_sam3_progress,
                 )
 
-                sample_interval = job.metadata.get(
-                    "sample_interval", settings.batch_sample_interval
+                sample_interval = max(
+                    1, int(job.metadata.get("sample_interval", settings.batch_sample_interval))
                 )
-                frames_processed = await pipeline.process_video_to_db(
-                    video_id=video_id,
-                    video_path=video_path,
-                    db_session=db,
-                    sample_interval=sample_interval,
-                )
+
+                try:
+                    frames_processed = await pipeline.process_video_to_db(
+                        video_id=video_id,
+                        video_path=video_path,
+                        db_session=db,
+                        sample_interval=sample_interval,
+                    )
+                except Exception as e:
+                    logger.exception(f"SAM3 pipeline failed for video {video_id}: {e}")
+                    video.processing_status = ProcessingStatus.FAILED
+                    await db.commit()
+                    raise
 
                 # Get detection count
                 from sqlalchemy import func
