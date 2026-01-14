@@ -6,7 +6,7 @@ Usage:
 
 This script tests SAM3 tracking on a real video and reports:
 - Number of unique track IDs (should be ~10 for basketball, not 50+)
-- Track stability (same player should keep same ID)
+- Track ID frequency distribution
 - Processing time
 """
 
@@ -24,7 +24,7 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Test SAM3 tracking on video")
     parser.add_argument("video_path", type=Path, help="Path to video file")
     parser.add_argument(
@@ -52,7 +52,6 @@ def main():
     start_time = time.time()
     all_track_ids = []
     frame_count = 0
-    track_id_per_frame = {}
 
     for frame_detections in tracker.process_video(
         args.video_path, sample_interval=args.sample_interval
@@ -60,7 +59,6 @@ def main():
         frame_count += 1
         frame_track_ids = [d.tracking_id for d in frame_detections.detections]
         all_track_ids.extend(frame_track_ids)
-        track_id_per_frame[frame_detections.frame_number] = frame_track_ids
 
         if frame_count % 100 == 0:
             logger.info(f"Processed {frame_count} frames...")
