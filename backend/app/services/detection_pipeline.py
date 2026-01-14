@@ -24,7 +24,7 @@ from app.ml.court_detector import CourtDetector
 from app.ml.jersey_ocr import JerseyOCR, OCRConfig, OCRResult
 from app.ml.legibility_filter import LegibilityConfig, check_legibility, extract_jersey_crop
 from app.ml.norfair_tracker import NorfairTracker
-from app.ml.sam2_tracker import SAM2VideoTracker, SAM2TrackerConfig
+from app.ml.sam2_tracker import SAM2TrackerConfig, SAM2VideoTracker
 from app.ml.types import BoundingBox, Detection, FrameDetections
 from app.ml.yolo_detector import YOLODetector
 from app.models.detection import PlayerDetection
@@ -806,6 +806,9 @@ async def create_detection_job_worker(job_manager):
 
     This sets up the batch-based orchestrator to work with the background job system.
     The orchestrator checkpoints after each batch for resilience and supports resume.
+
+    When tracking_backend is "sam3", uses SAM3DetectionPipeline which provides
+    unified detection and tracking via text-prompted video segmentation.
     """
     from app.database import async_session_maker
     from app.services.job_manager import Job
@@ -817,6 +820,100 @@ async def create_detection_job_worker(job_manager):
             raise ValueError("video_id required in job metadata")
 
         async with async_session_maker() as db:
+            # Use SAM3 pipeline when sam3 backend is selected
+            if settings.tracking_backend == "sam3":
+                from pathlib import Path
+
+                from sqlalchemy import delete
+                from sqlalchemy.future import select
+
+                from app.models.detection import PlayerDetection
+                from app.models.jersey_number import JerseyNumber
+                from app.models.processing_batch import ProcessingBatch
+                from app.models.video import ProcessingStatus, Video
+                from app.services.sam3_detection_pipeline import SAM3DetectionPipeline
+
+                # Get video path
+                video_storage_path = Path(settings.video_storage_path)
+                result = await db.execute(select(Video).where(Video.id == video_id))
+                video = result.scalar_one_or_none()
+
+                if not video:
+                    raise ValueError(f"Video not found: {video_id}")
+
+                video_path = video_storage_path / video.file_path
+                if not video_path.exists():
+                    raise FileNotFoundError(f"Video file not found: {video_path}")
+
+                # Update status to processing
+                video.processing_status = ProcessingStatus.PROCESSING
+                await db.commit()
+
+                # Clear existing detections
+                await db.execute(delete(JerseyNumber).where(JerseyNumber.video_id == video_id))
+                await db.execute(
+                    delete(PlayerDetection).where(PlayerDetection.video_id == video_id)
+                )
+                await db.execute(
+                    delete(ProcessingBatch).where(ProcessingBatch.video_id == video_id)
+                )
+                await db.commit()
+
+                logger.info(f"Starting SAM3 detection job for video {video_id}")
+                update_progress(5, 100, "[1/2] SAM3: Processing video...")
+
+                # Create progress callback for SAM3 pipeline
+                def on_sam3_progress(current: int, total: int) -> None:
+                    if total > 0:
+                        pct = 5 + int((current / total) * 90)
+                    else:
+                        pct = 50  # Unknown total
+                    update_progress(pct, 100, f"[1/2] SAM3: Frame {current}...")
+
+                pipeline = SAM3DetectionPipeline(
+                    prompt=settings.sam3_prompt,
+                    confidence_threshold=settings.sam3_confidence_threshold,
+                    on_progress=on_sam3_progress,
+                )
+
+                sample_interval = job.metadata.get(
+                    "sample_interval", settings.batch_sample_interval
+                )
+                frames_processed = await pipeline.process_video_to_db(
+                    video_id=video_id,
+                    video_path=video_path,
+                    db_session=db,
+                    sample_interval=sample_interval,
+                )
+
+                # Get detection count
+                from sqlalchemy import func
+
+                count_result = await db.execute(
+                    select(func.count())
+                    .select_from(PlayerDetection)
+                    .where(PlayerDetection.video_id == video_id)
+                )
+                total_detections = count_result.scalar_one()
+
+                # Update video status
+                video.processing_status = ProcessingStatus.COMPLETED
+                video.processed = True
+                await db.commit()
+
+                update_progress(100, 100, "[2/2] Complete")
+
+                return {
+                    "video_id": video_id,
+                    "batches_processed": 1,
+                    "total_frames_processed": frames_processed,
+                    "total_detections": total_detections,
+                    "total_ocr_results": 0,  # SAM3 doesn't do OCR yet
+                    "resumed_from_batch": None,
+                    "tracking_backend": "sam3",
+                }
+
+            # Default: use SequentialOrchestrator for bytetrack, norfair, sam2
             resolved_device = SequentialOrchestrator._resolve_device(settings.ml_device)
             config = OrchestratorConfig(
                 frames_per_batch=job.metadata.get(
