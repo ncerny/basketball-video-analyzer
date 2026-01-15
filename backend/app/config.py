@@ -82,6 +82,7 @@ class Settings(BaseSettings):
     sam3_confidence_threshold: float = 0.25
     sam3_use_half_precision: bool = True
     sam3_temp_frames_dir: Path = Path("/tmp/sam3_frames")
+    sam3_sample_interval: int = 1  # Must be 1 for stable tracking IDs
 
     @property
     def models_dir(self) -> Path:

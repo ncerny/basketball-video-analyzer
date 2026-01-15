@@ -57,7 +57,8 @@ class SAM3DetectionPipeline:
         Yields:
             FrameDetections for each processed frame.
         """
-        interval = sample_interval or settings.batch_sample_interval
+        # SAM3 requires sample_interval=1 for stable tracking IDs
+        interval = sample_interval or settings.sam3_sample_interval
 
         logger.info(f"Starting SAM3 pipeline for {video_path}")
 
