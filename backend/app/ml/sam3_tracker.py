@@ -29,9 +29,10 @@ class SAM3TrackerConfig:
     confidence_threshold: float = 0.25
     device: str = "auto"
     use_half_precision: bool = True
-    # Chunk size for memory management - reset tracking state every N frames
-    # to prevent OOM on long videos. Set to 0 to disable chunking.
-    chunk_size: int = 300
+    # Rolling window size for memory management - keep only the last N frames
+    # of tracking memory to prevent OOM on long videos. Set to 0 to disable
+    # (will use all available memory). Recommended: 30-60 frames.
+    memory_window_size: int = 30
 
 
 class SAM3VideoTracker:
@@ -134,12 +135,10 @@ class SAM3VideoTracker:
     ) -> Generator[FrameDetections, None, None]:
         """Process video and yield FrameDetections for each frame.
 
-        Uses streaming mode with chunked processing to prevent memory
-        exhaustion on long videos. SAM3's tracking state accumulates memory
-        over time, so we reset tracking every `chunk_size` frames.
-
-        Within each chunk, tracking IDs are stable. Across chunks, IDs are
-        offset by chunk_number * 1000 to maintain global uniqueness.
+        Uses streaming mode with a rolling memory window to prevent memory
+        exhaustion on long videos. Only the last `memory_window_size` frames
+        of tracking state are kept, allowing continuous tracking IDs while
+        bounding memory usage.
 
         Note: Streaming mode disables some hotstart heuristics that require
         future frames, which may result in slightly more false positives
@@ -154,7 +153,7 @@ class SAM3VideoTracker:
             start_frame: Start processing from this frame number.
 
         Yields:
-            FrameDetections for each processed frame with tracking IDs.
+            FrameDetections for each processed frame with continuous tracking IDs.
         """
         import gc
 
@@ -163,7 +162,7 @@ class SAM3VideoTracker:
         self._load_predictor()
 
         video_id = video_path.stem
-        chunk_size = self._config.chunk_size
+        window_size = self._config.memory_window_size
 
         with self._frame_extractor.temp_frame_folder(video_id) as frames_dir:
             # Extract frames to JPEG folder
@@ -177,7 +176,7 @@ class SAM3VideoTracker:
 
             logger.info(
                 f"Processing {extraction.frame_count} frames with SAM3 streaming mode "
-                f"(prompt='{self._config.prompt}', chunk_size={chunk_size})"
+                f"(prompt='{self._config.prompt}', memory_window={window_size})"
             )
 
             frame_paths = sorted(frames_dir.glob("*.jpg"))
@@ -204,32 +203,8 @@ class SAM3VideoTracker:
 
             logger.info(f"Added text prompt: '{self._config.prompt}'")
 
-            # Track chunk for ID offset
-            current_chunk = 0
-            frames_in_chunk = 0
-
             # Process frames one-by-one in streaming mode
             for frame_idx, frame_path in enumerate(frame_paths):
-                # Check if we need to start a new chunk (reset tracking state)
-                if chunk_size > 0 and frames_in_chunk >= chunk_size:
-                    current_chunk += 1
-                    frames_in_chunk = 0
-
-                    logger.info(
-                        f"Starting chunk {current_chunk} at frame {frame_idx} "
-                        f"(resetting tracking state to free memory)"
-                    )
-
-                    # Reset tracking state to free accumulated memory
-                    inference_session.reset_tracking_data()
-
-                    # Force garbage collection and clear GPU cache
-                    gc.collect()
-                    if self._device == "cuda":
-                        torch.cuda.empty_cache()
-                    elif self._device == "mps":
-                        torch.mps.empty_cache()
-
                 # Load single frame (memory efficient - only one frame at a time)
                 frame = Image.open(frame_path)
                 frame.load()
@@ -255,35 +230,90 @@ class SAM3VideoTracker:
                     original_sizes=inputs.original_sizes,
                 )
 
+                # Prune old frame outputs to bound memory (rolling window)
+                if window_size > 0:
+                    self._prune_old_frames(inference_session, frame_idx, window_size)
+
                 # Get original frame number from extraction mapping
                 original_frame_number = extraction.frame_indices[frame_idx]
 
-                # Convert to FrameDetections with chunk-offset IDs
+                # Convert to FrameDetections (continuous IDs, no chunking)
                 frame_detections = self._convert_to_frame_detections(
                     processed_outputs,
                     frame_number=original_frame_number,
                     frame_width=extraction.width,
                     frame_height=extraction.height,
-                    id_offset=current_chunk * 1000,
                 )
                 yield frame_detections
 
-                frames_in_chunk += 1
-
                 # Log progress periodically
                 if (frame_idx + 1) % 100 == 0:
-                    logger.info(
-                        f"Processed {frame_idx + 1}/{len(frame_paths)} frames "
-                        f"(chunk {current_chunk}, {frames_in_chunk} frames in chunk)..."
-                    )
+                    logger.info(f"Processed {frame_idx + 1}/{len(frame_paths)} frames...")
 
                 # Free memory - let PIL image be garbage collected
                 del frame, inputs
 
-            logger.info(
-                f"Streaming processing complete: {len(frame_paths)} frames "
-                f"across {current_chunk + 1} chunks"
-            )
+                # Periodic garbage collection
+                if (frame_idx + 1) % 50 == 0:
+                    gc.collect()
+
+            logger.info(f"Streaming processing complete: {len(frame_paths)} frames")
+
+    def _prune_old_frames(
+        self,
+        inference_session,
+        current_frame_idx: int,
+        window_size: int,
+    ) -> None:
+        """Prune old frame outputs to maintain a rolling memory window.
+
+        This keeps tracking IDs continuous while bounding memory usage by
+        removing per-frame outputs older than the window. Essential tracking
+        state (object IDs, conditioning frames) is preserved.
+
+        Args:
+            inference_session: The SAM3 video inference session.
+            current_frame_idx: Current frame index being processed.
+            window_size: Number of recent frames to keep.
+        """
+        if current_frame_idx < window_size:
+            return  # Not enough frames yet
+
+        cutoff_frame = current_frame_idx - window_size
+
+        # Prune non-conditioning frame outputs for each tracked object
+        # These store masks/memory features per frame and grow unbounded
+        if hasattr(inference_session, "output_dict_per_obj"):
+            for obj_idx in list(inference_session.output_dict_per_obj.keys()):
+                obj_outputs = inference_session.output_dict_per_obj[obj_idx]
+
+                # Prune non-conditioning frame outputs (the bulk of memory)
+                if "non_cond_frame_outputs" in obj_outputs:
+                    non_cond = obj_outputs["non_cond_frame_outputs"]
+                    frames_to_remove = [
+                        f for f in non_cond.keys() if f < cutoff_frame
+                    ]
+                    for f in frames_to_remove:
+                        del non_cond[f]
+
+        # Prune frame-wise tracker scores
+        if hasattr(inference_session, "obj_id_to_tracker_score_frame_wise"):
+            for obj_id in list(
+                inference_session.obj_id_to_tracker_score_frame_wise.keys()
+            ):
+                scores = inference_session.obj_id_to_tracker_score_frame_wise[obj_id]
+                frames_to_remove = [f for f in scores.keys() if f < cutoff_frame]
+                for f in frames_to_remove:
+                    del scores[f]
+
+        # Prune frames_tracked_per_obj
+        if hasattr(inference_session, "frames_tracked_per_obj"):
+            for obj_idx in list(inference_session.frames_tracked_per_obj.keys()):
+                tracked = inference_session.frames_tracked_per_obj[obj_idx]
+                if isinstance(tracked, set):
+                    inference_session.frames_tracked_per_obj[obj_idx] = {
+                        f for f in tracked if f >= cutoff_frame
+                    }
 
     def _convert_to_frame_detections(
         self,
@@ -291,7 +321,6 @@ class SAM3VideoTracker:
         frame_number: int,
         frame_width: int,
         frame_height: int,
-        id_offset: int = 0,
     ) -> FrameDetections:
         """Convert SAM3 output to FrameDetections type.
 
@@ -300,7 +329,6 @@ class SAM3VideoTracker:
             frame_number: Original video frame number.
             frame_width: Video frame width.
             frame_height: Video frame height.
-            id_offset: Offset to add to tracking IDs for chunk-based uniqueness.
 
         Returns:
             FrameDetections compatible with existing pipeline.
@@ -344,7 +372,7 @@ class SAM3VideoTracker:
                 confidence=confidence,
                 class_id=0,  # person
                 class_name="person",
-                tracking_id=int(obj_id) + id_offset,
+                tracking_id=int(obj_id),
             )
             detections.append(detection)
 
