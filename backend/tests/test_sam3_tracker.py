@@ -46,7 +46,8 @@ class TestSAM3VideoTracker:
         tracker = SAM3VideoTracker(config)
 
         assert tracker._config == config
-        assert tracker._predictor is None  # Lazy loaded
+        assert tracker._model is None  # Lazy loaded
+        assert tracker._processor is None  # Lazy loaded
 
     def test_select_device_prefers_cuda(self) -> None:
         """Test device selection prefers CUDA when available."""

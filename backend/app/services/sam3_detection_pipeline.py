@@ -4,6 +4,7 @@ This pipeline uses SAM3's unified detection and tracking to process
 basketball videos with stable player tracking.
 """
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import AsyncGenerator, Callable
@@ -50,6 +51,10 @@ class SAM3DetectionPipeline:
     ) -> AsyncGenerator[FrameDetections, None]:
         """Process video and yield FrameDetections.
 
+        Note: SAM3 uses MPS (Metal) on macOS which is NOT thread-safe.
+        We run inference on the main thread but yield control periodically
+        to keep the event loop responsive.
+
         Args:
             video_path: Path to video file.
             sample_interval: Process every Nth frame (default: from settings).
@@ -63,15 +68,25 @@ class SAM3DetectionPipeline:
         logger.info(f"Starting SAM3 pipeline for {video_path}")
 
         frame_count = 0
-        for frame_detections in self._tracker.process_video(
-            video_path, sample_interval=interval
-        ):
-            frame_count += 1
+        try:
+            for frame_detections in self._tracker.process_video(
+                video_path, sample_interval=interval
+            ):
+                frame_count += 1
 
-            if self._on_progress:
-                self._on_progress(frame_count, -1)  # Total unknown
+                if self._on_progress:
+                    self._on_progress(frame_count, -1)  # Total unknown
 
-            yield frame_detections
+                yield frame_detections
+
+                # Yield control to event loop every 10 frames
+                # This keeps other async tasks responsive
+                if frame_count % 10 == 0:
+                    await asyncio.sleep(0)
+
+        except Exception as e:
+            logger.exception(f"SAM3 pipeline error at frame {frame_count}: {e}")
+            raise
 
         logger.info(f"SAM3 pipeline complete: {frame_count} frames processed")
 
