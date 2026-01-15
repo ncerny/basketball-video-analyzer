@@ -131,9 +131,16 @@ class SAM3VideoTracker:
     ) -> Generator[FrameDetections, None, None]:
         """Process video and yield FrameDetections for each frame.
 
-        SAM3's video tracking relies on temporal continuity between frames.
-        Using sample_interval > 1 will cause tracking IDs to become unstable
-        as players move significantly between sampled frames.
+        Uses streaming mode to process frames one-by-one, avoiding memory
+        exhaustion on long videos. SAM3's video tracking relies on temporal
+        continuity between frames. Using sample_interval > 1 will cause
+        tracking IDs to become unstable as players move significantly
+        between sampled frames.
+
+        Note: Streaming mode disables some hotstart heuristics that require
+        future frames, which may result in slightly more false positives
+        compared to pre-loaded mode. This tradeoff is necessary to support
+        long videos without memory exhaustion.
 
         Args:
             video_path: Path to input video file.
@@ -162,32 +169,20 @@ class SAM3VideoTracker:
             )
 
             logger.info(
-                f"Processing {extraction.frame_count} frames with SAM3 "
+                f"Processing {extraction.frame_count} frames with SAM3 streaming mode "
                 f"(prompt='{self._config.prompt}')"
             )
 
-            # Load all frames as PIL images
             frame_paths = sorted(frames_dir.glob("*.jpg"))
             if not frame_paths:
                 logger.warning("No frames extracted")
                 return
 
-            # Load frames as list of PIL images for the processor
-            # Note: We must load image data immediately to avoid keeping
-            # thousands of file handles open (causes "Too many open files" error)
-            def load_frame(fp):
-                img = Image.open(fp)
-                img.load()  # Force load into memory and close file handle
-                return img
-
-            video_frames = [load_frame(fp) for fp in frame_paths]
-
             # Get dtype for model
             dtype = torch.bfloat16 if self._config.use_half_precision else torch.float32
 
-            # Initialize video inference session
+            # Initialize streaming video session (no video parameter = streaming mode)
             inference_session = self._processor.init_video_session(
-                video=video_frames,
                 inference_device=self._device,
                 processing_device="cpu",
                 video_storage_device="cpu",
@@ -202,31 +197,53 @@ class SAM3VideoTracker:
 
             logger.info(f"Added text prompt: '{self._config.prompt}'")
 
-            # Process all frames using propagate_in_video_iterator
-            outputs_per_frame = {}
-            for model_outputs in self._model.propagate_in_video_iterator(
-                inference_session=inference_session,
-                max_frame_num_to_track=len(video_frames),
-            ):
-                processed_outputs = self._processor.postprocess_outputs(
-                    inference_session, model_outputs
+            # Process frames one-by-one in streaming mode
+            for frame_idx, frame_path in enumerate(frame_paths):
+                # Load single frame (memory efficient - only one frame at a time)
+                frame = Image.open(frame_path)
+                frame.load()
+
+                # Process frame through processor
+                inputs = self._processor(
+                    images=frame,
+                    device=self._device,
+                    return_tensors="pt",
                 )
-                outputs_per_frame[model_outputs.frame_idx] = processed_outputs
 
-            logger.info(f"Processed {len(outputs_per_frame)} frames")
+                # Run streaming inference
+                model_outputs = self._model(
+                    inference_session=inference_session,
+                    frame=inputs.pixel_values[0],
+                    reverse=False,
+                )
 
-            # Yield detections for each frame
-            for frame_idx in sorted(outputs_per_frame.keys()):
-                frame_outputs = outputs_per_frame[frame_idx]
+                # Post-process outputs
+                processed_outputs = self._processor.postprocess_outputs(
+                    inference_session,
+                    model_outputs,
+                    original_sizes=inputs.original_sizes,
+                )
+
+                # Get original frame number from extraction mapping
                 original_frame_number = extraction.frame_indices[frame_idx]
 
+                # Convert to FrameDetections and yield immediately
                 frame_detections = self._convert_to_frame_detections(
-                    frame_outputs,
+                    processed_outputs,
                     frame_number=original_frame_number,
                     frame_width=extraction.width,
                     frame_height=extraction.height,
                 )
                 yield frame_detections
+
+                # Log progress periodically
+                if (frame_idx + 1) % 100 == 0:
+                    logger.info(f"Processed {frame_idx + 1}/{len(frame_paths)} frames...")
+
+                # Free memory - let PIL image be garbage collected
+                del frame, inputs
+
+            logger.info(f"Streaming processing complete: {len(frame_paths)} frames")
 
     def _convert_to_frame_detections(
         self,
