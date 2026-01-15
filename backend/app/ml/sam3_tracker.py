@@ -1,7 +1,7 @@
 """SAM3 video tracker using Meta's Segment Anything Model 3.
 
 SAM3 provides unified detection, segmentation, and tracking with
-text prompts. This module wraps SAM3's VideoPredictor for basketball
+text prompts. This module wraps SAM3's VideoModel for basketball
 player tracking.
 """
 
@@ -34,7 +34,7 @@ class SAM3TrackerConfig:
 class SAM3VideoTracker:
     """SAM3-based tracker using text-prompted video segmentation.
 
-    Uses SAM3's VideoPredictor to detect and track all instances of
+    Uses SAM3's VideoModel to detect and track all instances of
     "basketball player" (or custom prompt) throughout a video with
     stable object IDs.
 
@@ -58,7 +58,8 @@ class SAM3VideoTracker:
         )
 
         # Lazy-loaded components
-        self._predictor = None
+        self._model = None
+        self._processor = None
         self._device = None
         self._frame_extractor = SAM3FrameExtractor()
 
@@ -94,45 +95,58 @@ class SAM3VideoTracker:
         return "cpu"
 
     def _load_predictor(self) -> None:
-        """Lazy load SAM3 VideoPredictor."""
-        if self._predictor is not None:
+        """Lazy load SAM3 video model and processor."""
+        if self._model is not None:
             return
 
         try:
-            from transformers import Sam3VideoPredictor
+            from transformers import Sam3VideoModel, Sam3VideoProcessor
 
             self._device = self._select_device()
+            dtype = torch.bfloat16 if self._config.use_half_precision else torch.float32
 
-            logger.info(f"Loading SAM3 VideoPredictor on {self._device}...")
+            logger.info(f"Loading SAM3 video model on {self._device}...")
 
-            self._predictor = Sam3VideoPredictor.from_pretrained(
+            self._model = Sam3VideoModel.from_pretrained(
                 "facebook/sam3",
-                device=self._device,
-                torch_dtype="float16" if self._config.use_half_precision else "float32",
-            )
+                torch_dtype=dtype,
+            ).to(self._device)
 
-            logger.info("SAM3 VideoPredictor loaded successfully")
+            self._processor = Sam3VideoProcessor.from_pretrained("facebook/sam3")
+
+            logger.info("SAM3 video model loaded successfully")
 
         except ImportError as e:
             raise ImportError(
                 "SAM3 not installed. Install with: "
-                "pip install git+https://github.com/huggingface/transformers"
+                "uv pip install transformers>=4.48"
             ) from e
 
     def process_video(
         self,
         video_path: Path,
-        sample_interval: int = 3,
+        sample_interval: int = 1,
+        max_frames: int | None = None,
+        start_frame: int = 0,
     ) -> Generator[FrameDetections, None, None]:
         """Process video and yield FrameDetections for each frame.
 
+        SAM3's video tracking relies on temporal continuity between frames.
+        Using sample_interval > 1 will cause tracking IDs to become unstable
+        as players move significantly between sampled frames.
+
         Args:
             video_path: Path to input video file.
-            sample_interval: Process every Nth frame.
+            sample_interval: Process every Nth frame. Default 1 (every frame)
+                is strongly recommended for stable tracking IDs.
+            max_frames: Maximum number of frames to process (None = all).
+            start_frame: Start processing from this frame number.
 
         Yields:
             FrameDetections for each processed frame with stable tracking IDs.
         """
+        from PIL import Image
+
         self._load_predictor()
 
         video_id = video_path.stem
@@ -140,7 +154,11 @@ class SAM3VideoTracker:
         with self._frame_extractor.temp_frame_folder(video_id) as frames_dir:
             # Extract frames to JPEG folder
             extraction = self._frame_extractor.extract_frames(
-                video_path, frames_dir, sample_interval=sample_interval
+                video_path,
+                frames_dir,
+                sample_interval=sample_interval,
+                max_frames=max_frames,
+                start_frame=start_frame,
             )
 
             logger.info(
@@ -148,37 +166,60 @@ class SAM3VideoTracker:
                 f"(prompt='{self._config.prompt}')"
             )
 
-            # Start SAM3 session
-            session_id = self._predictor.start_session(str(frames_dir))
+            # Load all frames as PIL images
+            frame_paths = sorted(frames_dir.glob("*.jpg"))
+            if not frame_paths:
+                logger.warning("No frames extracted")
+                return
 
-            try:
-                # Add text prompt at frame 0
-                self._predictor.add_prompt(
-                    session_id=session_id,
-                    frame_index=0,
-                    text=self._config.prompt,
+            # Load frames as list of PIL images for the processor
+            video_frames = [Image.open(fp) for fp in frame_paths]
+
+            # Get dtype for model
+            dtype = torch.bfloat16 if self._config.use_half_precision else torch.float32
+
+            # Initialize video inference session
+            inference_session = self._processor.init_video_session(
+                video=video_frames,
+                inference_device=self._device,
+                processing_device="cpu",
+                video_storage_device="cpu",
+                dtype=dtype,
+            )
+
+            # Add text prompt for detection and tracking
+            inference_session = self._processor.add_text_prompt(
+                inference_session=inference_session,
+                text=self._config.prompt,
+            )
+
+            logger.info(f"Added text prompt: '{self._config.prompt}'")
+
+            # Process all frames using propagate_in_video_iterator
+            outputs_per_frame = {}
+            for model_outputs in self._model.propagate_in_video_iterator(
+                inference_session=inference_session,
+                max_frame_num_to_track=len(video_frames),
+            ):
+                processed_outputs = self._processor.postprocess_outputs(
+                    inference_session, model_outputs
                 )
+                outputs_per_frame[model_outputs.frame_idx] = processed_outputs
 
-                # Propagate through video
-                for output in self._predictor.propagate_in_video(
-                    session_id=session_id,
-                    direction="forward",
-                ):
-                    # Map SAM3 frame index back to original video frame number
-                    sam3_frame_idx = output["frame_index"]
-                    original_frame_number = extraction.frame_indices[sam3_frame_idx]
+            logger.info(f"Processed {len(outputs_per_frame)} frames")
 
-                    frame_detections = self._convert_to_frame_detections(
-                        output,
-                        frame_number=original_frame_number,
-                        frame_width=extraction.width,
-                        frame_height=extraction.height,
-                    )
+            # Yield detections for each frame
+            for frame_idx in sorted(outputs_per_frame.keys()):
+                frame_outputs = outputs_per_frame[frame_idx]
+                original_frame_number = extraction.frame_indices[frame_idx]
 
-                    yield frame_detections
-
-            finally:
-                self._predictor.close_session(session_id)
+                frame_detections = self._convert_to_frame_detections(
+                    frame_outputs,
+                    frame_number=original_frame_number,
+                    frame_width=extraction.width,
+                    frame_height=extraction.height,
+                )
+                yield frame_detections
 
     def _convert_to_frame_detections(
         self,
@@ -190,7 +231,7 @@ class SAM3VideoTracker:
         """Convert SAM3 output to FrameDetections type.
 
         Args:
-            sam3_output: Output dict from SAM3 propagate_in_video.
+            sam3_output: Output dict from SAM3 postprocess_outputs.
             frame_number: Original video frame number.
             frame_width: Video frame width.
             frame_height: Video frame height.
@@ -200,10 +241,24 @@ class SAM3VideoTracker:
         """
         detections = []
 
-        object_ids = sam3_output.get("object_ids", [])
+        # Extract arrays from output
+        object_ids = sam3_output.get("object_ids", np.array([]))
         boxes = sam3_output.get("boxes", np.array([]))
         scores = sam3_output.get("scores", np.array([]))
-        masks = sam3_output.get("masks", [])
+
+        # Convert to numpy if tensors (handle GPU tensors by moving to CPU first)
+        if hasattr(object_ids, "cpu"):
+            object_ids = object_ids.cpu().numpy()
+        elif hasattr(object_ids, "numpy"):
+            object_ids = object_ids.numpy()
+        if hasattr(boxes, "cpu"):
+            boxes = boxes.cpu().numpy()
+        elif hasattr(boxes, "numpy"):
+            boxes = boxes.numpy()
+        if hasattr(scores, "cpu"):
+            scores = scores.cpu().numpy()
+        elif hasattr(scores, "numpy"):
+            scores = scores.numpy()
 
         for i, obj_id in enumerate(object_ids):
             # Skip low confidence detections
@@ -211,7 +266,7 @@ class SAM3VideoTracker:
             if confidence < self._config.confidence_threshold:
                 continue
 
-            # Convert box from x1y1x2y2 to BoundingBox
+            # Convert box from xyxy to BoundingBox
             if i < len(boxes):
                 x1, y1, x2, y2 = boxes[i]
                 bbox = BoundingBox.from_xyxy(float(x1), float(y1), float(x2), float(y2))

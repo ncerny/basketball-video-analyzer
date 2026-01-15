@@ -48,6 +48,8 @@ class SAM3FrameExtractor:
         video_path: Path,
         output_dir: Path,
         sample_interval: int = 1,
+        max_frames: int | None = None,
+        start_frame: int = 0,
     ) -> FrameExtractionResult:
         """Extract frames from video to JPEG files.
 
@@ -55,6 +57,8 @@ class SAM3FrameExtractor:
             video_path: Path to input video file.
             output_dir: Directory to save JPEG frames.
             sample_interval: Extract every Nth frame (default: every frame).
+            max_frames: Maximum number of frames to extract (None = all).
+            start_frame: Start extraction from this frame number.
 
         Returns:
             FrameExtractionResult with metadata about extracted frames.
@@ -73,16 +77,24 @@ class SAM3FrameExtractor:
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
+            # Seek to start frame if specified
+            if start_frame > 0:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+
             frame_indices = []
             output_idx = 0
-            input_idx = 0
+            input_idx = start_frame
 
             while True:
                 ret, frame = cap.read()
                 if not ret:
                     break
 
-                if input_idx % sample_interval == 0:
+                # Check max_frames limit
+                if max_frames is not None and output_idx >= max_frames:
+                    break
+
+                if (input_idx - start_frame) % sample_interval == 0:
                     # SAM3 expects frames named as 6-digit numbers
                     frame_path = output_dir / f"{output_idx:06d}.jpg"
                     cv2.imwrite(
@@ -127,6 +139,10 @@ class SAM3FrameExtractor:
         """
         folder = settings.sam3_temp_frames_dir / video_id
         try:
+            # Clean up any existing frames from previous crashed runs
+            if folder.exists():
+                shutil.rmtree(folder, ignore_errors=True)
+                logger.debug(f"Cleaned up stale temp frames: {folder}")
             folder.mkdir(parents=True, exist_ok=True)
             yield folder
         finally:
