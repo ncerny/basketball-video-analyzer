@@ -173,7 +173,14 @@ class SAM3VideoTracker:
                 return
 
             # Load frames as list of PIL images for the processor
-            video_frames = [Image.open(fp) for fp in frame_paths]
+            # Note: We must load image data immediately to avoid keeping
+            # thousands of file handles open (causes "Too many open files" error)
+            def load_frame(fp):
+                img = Image.open(fp)
+                img.load()  # Force load into memory and close file handle
+                return img
+
+            video_frames = [load_frame(fp) for fp in frame_paths]
 
             # Get dtype for model
             dtype = torch.bfloat16 if self._config.use_half_precision else torch.float32
