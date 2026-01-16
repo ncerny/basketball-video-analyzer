@@ -29,10 +29,28 @@ class SAM3TrackerConfig:
     confidence_threshold: float = 0.25
     device: str = "auto"
     use_half_precision: bool = True
-    # Rolling window size for memory management - keep only the last N frames
-    # of tracking memory to prevent OOM on long videos. Set to 0 to disable
-    # (will use all available memory). Recommended: 30-60 frames.
-    memory_window_size: int = 30
+
+    # Memory management strategy:
+    #
+    # IMPORTANT: SAM3's tracking mechanism requires full historical context to
+    # maintain stable object IDs. Pruning old frames causes tracking IDs to drift
+    # even with large windows (tested: 100-frame window still caused ID drift).
+    #
+    # Options:
+    #   - 0 (default): Keep all frames in memory. Provides stable tracking IDs
+    #     but will consume memory proportional to video length. Recommended for
+    #     videos < 1000 frames or systems with ample memory (16GB+).
+    #
+    #   - >0: Experimental rolling window. Prunes frame outputs older than this
+    #     many frames. CAUSES TRACKING ID DRIFT - objects may get new IDs as
+    #     historical context is lost. Only use if you don't need consistent
+    #     tracking IDs (e.g., frame-by-frame detection only).
+    #
+    # For long videos where OOM is a concern, consider:
+    #   1. Processing in chunks with sample_interval>1
+    #   2. Using chunked processing with explicit ID renumbering
+    #   3. Running on a system with more memory
+    memory_window_size: int = 0
 
 
 class SAM3VideoTracker:
@@ -135,15 +153,15 @@ class SAM3VideoTracker:
     ) -> Generator[FrameDetections, None, None]:
         """Process video and yield FrameDetections for each frame.
 
-        Uses streaming mode with a rolling memory window to prevent memory
-        exhaustion on long videos. Only the last `memory_window_size` frames
-        of tracking state are kept, allowing continuous tracking IDs while
-        bounding memory usage.
+        Uses streaming mode to process one frame at a time. Memory usage
+        depends on the `memory_window_size` config setting:
 
-        Note: Streaming mode disables some hotstart heuristics that require
-        future frames, which may result in slightly more false positives
-        compared to pre-loaded mode. This tradeoff is necessary to support
-        long videos without memory exhaustion.
+        - window_size=0 (default): Keeps all frame outputs in memory. Provides
+          stable tracking IDs but memory grows with video length.
+
+        - window_size>0: Experimental rolling window that prunes old frames.
+          WARNING: This causes tracking ID drift and is not recommended if you
+          need consistent object IDs across the video.
 
         Args:
             video_path: Path to input video file.
@@ -153,7 +171,7 @@ class SAM3VideoTracker:
             start_frame: Start processing from this frame number.
 
         Yields:
-            FrameDetections for each processed frame with continuous tracking IDs.
+            FrameDetections for each processed frame.
         """
         import gc
 
@@ -173,6 +191,13 @@ class SAM3VideoTracker:
                 max_frames=max_frames,
                 start_frame=start_frame,
             )
+
+            if window_size > 0:
+                logger.warning(
+                    f"Rolling memory window enabled (size={window_size}). "
+                    "This WILL cause tracking ID drift. Set memory_window_size=0 "
+                    "for stable tracking IDs."
+                )
 
             logger.info(
                 f"Processing {extraction.frame_count} frames with SAM3 streaming mode "
@@ -267,9 +292,17 @@ class SAM3VideoTracker:
     ) -> None:
         """Prune old frame outputs to maintain a rolling memory window.
 
-        This keeps tracking IDs continuous while bounding memory usage by
-        removing per-frame outputs older than the window. Essential tracking
-        state (object IDs, conditioning frames) is preserved.
+        WARNING: This causes tracking ID drift! SAM3's memory mechanism needs
+        historical frame context to maintain stable object associations. Pruning
+        old frames breaks this context, causing objects to get reassigned new IDs.
+
+        Tested: Even with 100-frame window, IDs drifted from [0,1,2,3,4] at
+        frame 30 to [51,52,53,54,55] at frame 120.
+
+        Only use this if:
+        - You don't need consistent tracking IDs across the video
+        - You're doing frame-by-frame detection only
+        - Memory is critically constrained
 
         Args:
             inference_session: The SAM3 video inference session.
