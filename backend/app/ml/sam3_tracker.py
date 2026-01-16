@@ -32,23 +32,18 @@ class SAM3TrackerConfig:
 
     # Memory management strategy:
     #
-    # IMPORTANT: SAM3's tracking mechanism requires full historical context to
-    # maintain stable object IDs. Pruning old frames causes tracking IDs to drift
-    # even with large windows (tested: 100-frame window still caused ID drift).
-    #
     # Options:
     #   - 0 (default): Keep all frames in memory. Provides stable tracking IDs
-    #     but will consume memory proportional to video length. Recommended for
-    #     videos < 1000 frames or systems with ample memory (16GB+).
+    #     but memory grows with video length. Recommended for most use cases.
     #
-    #   - >0: Experimental rolling window. Prunes frame outputs older than this
-    #     many frames. CAUSES TRACKING ID DRIFT - objects may get new IDs as
-    #     historical context is lost. Only use if you don't need consistent
-    #     tracking IDs (e.g., frame-by-frame detection only).
+    #   - >0: Rolling window. Prunes frame outputs older than this many frames
+    #     to bound memory usage. Pruning only starts after processing this many
+    #     frames. The impact on tracking ID stability after pruning starts is
+    #     not fully characterized - use with caution for long videos.
     #
     # For long videos where OOM is a concern, consider:
-    #   1. Processing in chunks with sample_interval>1
-    #   2. Using chunked processing with explicit ID renumbering
+    #   1. Using sample_interval > 1
+    #   2. Using a rolling window (e.g., 200-500 frames)
     #   3. Running on a system with more memory
     memory_window_size: int = 0
 
@@ -159,9 +154,8 @@ class SAM3VideoTracker:
         - window_size=0 (default): Keeps all frame outputs in memory. Provides
           stable tracking IDs but memory grows with video length.
 
-        - window_size>0: Experimental rolling window that prunes old frames.
-          WARNING: This causes tracking ID drift and is not recommended if you
-          need consistent object IDs across the video.
+        - window_size>0: Rolling window that prunes frame outputs older than
+          this many frames to bound memory. Useful for long videos.
 
         Args:
             video_path: Path to input video file.
@@ -193,10 +187,9 @@ class SAM3VideoTracker:
             )
 
             if window_size > 0:
-                logger.warning(
+                logger.info(
                     f"Rolling memory window enabled (size={window_size}). "
-                    "This WILL cause tracking ID drift. Set memory_window_size=0 "
-                    "for stable tracking IDs."
+                    "Frame outputs older than this will be pruned to bound memory."
                 )
 
             logger.info(
@@ -292,17 +285,13 @@ class SAM3VideoTracker:
     ) -> None:
         """Prune old frame outputs to maintain a rolling memory window.
 
-        WARNING: This causes tracking ID drift! SAM3's memory mechanism needs
-        historical frame context to maintain stable object associations. Pruning
-        old frames breaks this context, causing objects to get reassigned new IDs.
+        This removes per-frame tracking outputs older than window_size frames
+        to bound memory usage. Pruning only starts once current_frame_idx
+        exceeds window_size.
 
-        Tested: Even with 100-frame window, IDs drifted from [0,1,2,3,4] at
-        frame 30 to [51,52,53,54,55] at frame 120.
-
-        Only use this if:
-        - You don't need consistent tracking IDs across the video
-        - You're doing frame-by-frame detection only
-        - Memory is critically constrained
+        Note: The impact on tracking ID stability after pruning starts is
+        not fully characterized. SAM3's memory mechanism may rely on historical
+        context, so pruning could affect object re-identification in later frames.
 
         Args:
             inference_session: The SAM3 video inference session.
