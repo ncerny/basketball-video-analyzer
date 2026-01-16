@@ -28,6 +28,8 @@ class SAM3TrackerConfig:
     prompt: str = "basketball player"
     confidence_threshold: float = 0.25
     device: str = "auto"
+    # Note: bfloat16 is NOT supported on MPS (Apple Silicon). When device is MPS,
+    # the tracker will automatically use float32 regardless of this setting.
     use_half_precision: bool = True
 
     # Memory management strategy:
@@ -78,6 +80,7 @@ class SAM3VideoTracker:
         self._model = None
         self._processor = None
         self._device = None
+        self._dtype = None
         self._frame_extractor = SAM3FrameExtractor()
 
         logger.info(
@@ -119,10 +122,27 @@ class SAM3VideoTracker:
         try:
             from transformers import Sam3VideoModel, Sam3VideoProcessor
 
-            self._device = self._select_device()
-            dtype = torch.bfloat16 if self._config.use_half_precision else torch.float32
+            # Apply cv_utils fallback for non-CUDA devices (e.g., MPS)
+            # This provides NMS and connected components in pure PyTorch
+            from .cv_utils_fallback import patch_sam3_cv_utils
 
-            logger.info(f"Loading SAM3 video model on {self._device}...")
+            patch_sam3_cv_utils()
+
+            self._device = self._select_device()
+
+            # Determine dtype: bfloat16 is NOT supported on MPS, use float32 instead
+            if self._device == "mps":
+                if self._config.use_half_precision:
+                    logger.warning(
+                        "bfloat16 is not supported on MPS (Apple Silicon). "
+                        "Using float32 for stable tracking."
+                    )
+                dtype = torch.float32
+            else:
+                dtype = torch.bfloat16 if self._config.use_half_precision else torch.float32
+
+            self._dtype = dtype
+            logger.info(f"Loading SAM3 video model on {self._device} with dtype={dtype}...")
 
             self._model = Sam3VideoModel.from_pretrained(
                 "facebook/sam3",
@@ -202,15 +222,13 @@ class SAM3VideoTracker:
                 logger.warning("No frames extracted")
                 return
 
-            # Get dtype for model
-            dtype = torch.bfloat16 if self._config.use_half_precision else torch.float32
-
             # Initialize streaming video session (no video parameter = streaming mode)
+            # Use the dtype determined during model loading (float32 on MPS)
             inference_session = self._processor.init_video_session(
                 inference_device=self._device,
                 processing_device="cpu",
                 video_storage_device="cpu",
-                dtype=dtype,
+                dtype=self._dtype,
             )
 
             # Add text prompt for detection and tracking
