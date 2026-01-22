@@ -1,0 +1,48 @@
+# backend/Dockerfile.worker
+# Cloud worker image with SAM3 model baked in
+#
+# Build locally (with model downloaded):
+#   docker build -f Dockerfile.worker -t basketball-analyzer-worker .
+#
+# Run:
+#   docker run -e R2_ACCOUNT_ID=xxx -e R2_ACCESS_KEY_ID=xxx \
+#     -e R2_SECRET_ACCESS_KEY=xxx -e R2_BUCKET_NAME=xxx \
+#     basketball-analyzer-worker
+
+FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy dependency files first (better caching)
+COPY pyproject.toml poetry.lock* ./
+
+# Install poetry and dependencies
+RUN pip install poetry && \
+    poetry config virtualenvs.create false && \
+    poetry install --no-interaction --no-ansi --only main,ml,video
+
+# Install additional cloud dependencies
+RUN pip install boto3 click
+
+# Copy application code
+COPY app/ ./app/
+COPY worker/ ./worker/
+
+# Copy pre-downloaded SAM3 model (build locally with model present)
+# The model should be at models/sam3/ relative to the build context
+COPY models/sam3 /models/sam3
+
+# Set environment variables
+ENV PYTHONPATH=/app
+ENV CLOUD_MODEL_PATH=/models/sam3
+
+# Default: run cloud worker
+CMD ["python", "-m", "worker", "--cloud"]

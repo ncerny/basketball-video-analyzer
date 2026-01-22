@@ -1,0 +1,23 @@
+# Ignore everything except what we need
+*
+!pyproject.toml
+!poetry.lock
+!app/
+!worker/
+!models/sam3/
+
+# Ignore Python cache
+**/__pycache__
+**/*.pyc
+**/*.pyo
+
+# Ignore test files
+**/tests/
+**/*_test.py
+**/test_*.py
+
+# Ignore development files
+.env
+.venv/
+*.db
+*.db-*
