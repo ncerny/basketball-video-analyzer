@@ -87,12 +87,19 @@ class CloudStorage:
 
         Returns:
             R2 key for the uploaded video.
+
+        Raises:
+            Exception: If upload fails.
         """
         key = f"videos/{job_id}{video_path.suffix}"
         logger.info(f"Uploading video to {key}...")
-        self._client.upload_file(str(video_path), self._bucket, key)
-        logger.info(f"Uploaded video: {key}")
-        return key
+        try:
+            self._client.upload_file(str(video_path), self._bucket, key)
+            logger.info(f"Uploaded video: {key}")
+            return key
+        except Exception as e:
+            logger.error(f"Failed to upload video {video_path} to {key}: {e}")
+            raise
 
     def download_video(self, job_id: str, dest_path: Path, suffix: str = ".mp4") -> None:
         """Download video file from R2.
@@ -101,23 +108,38 @@ class CloudStorage:
             job_id: Job ID.
             dest_path: Local destination path.
             suffix: Video file suffix.
+
+        Raises:
+            Exception: If download fails.
         """
         key = f"videos/{job_id}{suffix}"
         logger.info(f"Downloading video from {key}...")
-        self._client.download_file(self._bucket, key, str(dest_path))
-        logger.info(f"Downloaded video to: {dest_path}")
+        try:
+            self._client.download_file(self._bucket, key, str(dest_path))
+            logger.info(f"Downloaded video to: {dest_path}")
+        except Exception as e:
+            logger.error(f"Failed to download video from {key} to {dest_path}: {e}")
+            raise
 
     def upload_job_manifest(self, manifest: JobManifest) -> None:
-        """Upload job manifest to R2."""
+        """Upload job manifest to R2.
+
+        Raises:
+            Exception: If upload fails.
+        """
         key = f"jobs/{manifest.job_id}.json"
         body = json.dumps(manifest.to_dict(), indent=2)
-        self._client.put_object(
-            Bucket=self._bucket,
-            Key=key,
-            Body=body.encode("utf-8"),
-            ContentType="application/json",
-        )
-        logger.debug(f"Uploaded job manifest: {key}")
+        try:
+            self._client.put_object(
+                Bucket=self._bucket,
+                Key=key,
+                Body=body.encode("utf-8"),
+                ContentType="application/json",
+            )
+            logger.debug(f"Uploaded job manifest: {key}")
+        except Exception as e:
+            logger.error(f"Failed to upload job manifest for {manifest.job_id}: {e}")
+            raise
 
     def get_job_manifest(self, job_id: str) -> JobManifest | None:
         """Get job manifest from R2."""
@@ -127,6 +149,9 @@ class CloudStorage:
             data = json.loads(response["Body"].read().decode("utf-8"))
             return JobManifest.from_dict(data)
         except self._client.exceptions.NoSuchKey:
+            return None
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to decode job manifest JSON for {job_id}: {e}")
             return None
 
     def list_pending_jobs(self) -> list[JobManifest]:
@@ -148,16 +173,24 @@ class CloudStorage:
         return sorted(jobs, key=lambda j: j.created_at)
 
     def upload_results(self, job_id: str, results: dict[str, Any]) -> None:
-        """Upload detection results to R2."""
+        """Upload detection results to R2.
+
+        Raises:
+            Exception: If upload fails.
+        """
         key = f"results/{job_id}.json"
         body = json.dumps(results)
-        self._client.put_object(
-            Bucket=self._bucket,
-            Key=key,
-            Body=body.encode("utf-8"),
-            ContentType="application/json",
-        )
-        logger.info(f"Uploaded results: {key}")
+        try:
+            self._client.put_object(
+                Bucket=self._bucket,
+                Key=key,
+                Body=body.encode("utf-8"),
+                ContentType="application/json",
+            )
+            logger.info(f"Uploaded results: {key}")
+        except Exception as e:
+            logger.error(f"Failed to upload results for {job_id}: {e}")
+            raise
 
     def download_results(self, job_id: str) -> dict[str, Any] | None:
         """Download detection results from R2."""
@@ -166,6 +199,9 @@ class CloudStorage:
             response = self._client.get_object(Bucket=self._bucket, Key=key)
             return json.loads(response["Body"].read().decode("utf-8"))
         except self._client.exceptions.NoSuchKey:
+            return None
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to decode results JSON for {job_id}: {e}")
             return None
 
     def update_status(self, job_id: str, current: int, total: int, message: str = "") -> None:
@@ -191,14 +227,23 @@ class CloudStorage:
         try:
             response = self._client.get_object(Bucket=self._bucket, Key=key)
             return json.loads(response["Body"].read().decode("utf-8"))
-        except:
+        except self._client.exceptions.NoSuchKey:
+            return None
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to decode status JSON for {job_id}: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get status for {job_id}: {e}")
             return None
 
     def delete_job_files(self, job_id: str) -> None:
         """Delete all files for a job (cleanup after import)."""
         prefixes = [f"videos/{job_id}", f"jobs/{job_id}", f"results/{job_id}", f"status/{job_id}"]
+        deleted_count = 0
         for prefix in prefixes:
             response = self._client.list_objects_v2(Bucket=self._bucket, Prefix=prefix)
             for obj in response.get("Contents", []):
                 self._client.delete_object(Bucket=self._bucket, Key=obj["Key"])
                 logger.debug(f"Deleted: {obj['Key']}")
+                deleted_count += 1
+        logger.info(f"Cleanup complete for job {job_id}: deleted {deleted_count} files")
