@@ -9,6 +9,7 @@ from app.models.jersey_number import JerseyNumber
 from app.models.player import Player
 from app.models.play import Play, PlayType
 from app.models.processing_batch import BatchStatus, ProcessingBatch
+from app.models.processing_job import JobStatus, JobType, ProcessingJob
 from app.models.video import ProcessingStatus, Video
 from app.models.game_roster import TeamSide
 
@@ -21,11 +22,14 @@ __all__ = [
     "Game",
     "GameRoster",
     "JerseyNumber",
+    "JobStatus",
+    "JobType",
     "Player",
     "PlayerDetection",
     "Play",
     "PlayType",
     "ProcessingBatch",
+    "ProcessingJob",
     "ProcessingStatus",
     "TeamSide",
     "Video",

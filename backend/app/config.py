@@ -83,6 +83,12 @@ class Settings(BaseSettings):
     sam3_use_half_precision: bool = True
     sam3_temp_frames_dir: Path = Path("/tmp/sam3_frames")
     sam3_sample_interval: int = 1  # Must be 1 for stable tracking IDs
+    sam3_memory_window_size: int = 150  # Rolling window to bound memory (0 = keep all)
+
+    # Worker settings
+    # When True, detection jobs are queued in the database for an external worker process
+    # When False, detection runs in-process (blocking the API server)
+    use_external_worker: bool = True
 
     @property
     def models_dir(self) -> Path:
