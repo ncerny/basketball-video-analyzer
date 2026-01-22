@@ -2,6 +2,7 @@
 """Cloud worker that polls R2 for jobs and processes them."""
 
 import asyncio
+import gc
 import logging
 import signal
 import socket
@@ -10,6 +11,8 @@ import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+
+import torch
 
 from worker.cloud_storage import CloudStorage, JobManifest
 from worker.config import WorkerConfig
@@ -35,9 +38,9 @@ class CloudWorker:
         logger.info(f"Cloud worker {self._worker_id} starting...")
 
         while not shutdown_event.is_set():
-            # Poll for pending jobs
+            # Poll for pending jobs (wrap blocking I/O in thread for proper async)
             try:
-                jobs = self._storage.list_pending_jobs()
+                jobs = await asyncio.to_thread(self._storage.list_pending_jobs)
             except Exception as e:
                 logger.error(f"Failed to list pending jobs: {e}")
                 if single_job:
@@ -78,7 +81,7 @@ class CloudWorker:
                 job.error = str(e)
                 job.completed_at = datetime.now(timezone.utc).isoformat()
                 try:
-                    self._storage.upload_job_manifest(job)
+                    await asyncio.to_thread(self._storage.upload_job_manifest, job)
                 except Exception as upload_err:
                     logger.error(f"Failed to upload failure status for {job.job_id}: {upload_err}")
 
@@ -93,12 +96,19 @@ class CloudWorker:
         job.status = "processing"
         job.started_at = datetime.now(timezone.utc).isoformat()
         job.worker_id = self._worker_id
-        self._storage.upload_job_manifest(job)
+        await asyncio.to_thread(self._storage.upload_job_manifest, job)
 
         # Download video to temp file
         with tempfile.TemporaryDirectory() as tmpdir:
             video_path = Path(tmpdir) / f"{job.job_id}.mp4"
-            self._storage.download_video(job.job_id, video_path)
+            try:
+                logger.info(f"Downloading video for job {job.job_id}...")
+                await asyncio.to_thread(
+                    self._storage.download_video, job.job_id, video_path
+                )
+            except Exception as e:
+                logger.error(f"Video download failed for job {job.job_id}: {e}")
+                raise  # Re-raise; tempdir cleanup handled by context manager
 
             # Run detection
             detections = await self._run_detection(job, video_path)
@@ -111,12 +121,12 @@ class CloudWorker:
                 "frames_processed": job.frames_processed,
                 "detections": detections,
             }
-            self._storage.upload_results(job.job_id, results)
+            await asyncio.to_thread(self._storage.upload_results, job.job_id, results)
 
         # Mark as completed
         job.status = "completed"
         job.completed_at = datetime.now(timezone.utc).isoformat()
-        self._storage.upload_job_manifest(job)
+        await asyncio.to_thread(self._storage.upload_job_manifest, job)
 
         logger.info(f"Job {job.job_id} completed: {len(detections)} detections")
 
@@ -138,37 +148,66 @@ class CloudWorker:
 
         logger.info(f"Starting SAM3 detection (sample_interval={sample_interval})")
 
-        pipeline = SAM3DetectionPipeline(confidence_threshold=confidence)
+        # Initialize pipeline inside try block to ensure job state is correct on failure
+        pipeline = None
         detections = []
         frame_count = 0
 
-        async for frame_detections in pipeline.process_video(
-            video_path, sample_interval=sample_interval
-        ):
-            for det in frame_detections.detections:
-                detections.append({
-                    "frame": frame_detections.frame_number,
-                    "track_id": det.tracking_id,
-                    "bbox": [det.bbox.x, det.bbox.y, det.bbox.width, det.bbox.height],
-                    "confidence": det.confidence,
-                })
+        try:
+            pipeline = SAM3DetectionPipeline(confidence_threshold=confidence)
 
-            frame_count += 1
-            job.frames_processed = frame_count
+            async for frame_detections in pipeline.process_video(
+                video_path, sample_interval=sample_interval
+            ):
+                for det in frame_detections.detections:
+                    detections.append({
+                        "frame": frame_detections.frame_number,
+                        "track_id": det.tracking_id,
+                        "bbox": [det.bbox.x, det.bbox.y, det.bbox.width, det.bbox.height],
+                        "confidence": det.confidence,
+                    })
 
-            # Update progress every 50 frames
-            if frame_count % 50 == 0:
+                frame_count += 1
+                job.frames_processed = frame_count
+
+                # Update progress every 50 frames (async to allow signal handling)
+                if frame_count % 50 == 0:
+                    try:
+                        await asyncio.to_thread(
+                            self._storage.update_status,
+                            job.job_id,
+                            frame_count,
+                            -1,  # Unknown total
+                            f"Processing frame {frame_count}",
+                        )
+                        # Also update manifest
+                        await asyncio.to_thread(
+                            self._storage.upload_job_manifest, job
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to update progress for {job.job_id}: {e}")
+
+        finally:
+            # Release GPU/MPS resources held by the pipeline
+            if pipeline is not None:
+                del pipeline
+            gc.collect()
+
+            # Clear MPS cache if available (Apple Silicon GPU memory)
+            if torch.backends.mps.is_available():
                 try:
-                    self._storage.update_status(
-                        job.job_id,
-                        current=frame_count,
-                        total=-1,  # Unknown total
-                        message=f"Processing frame {frame_count}",
-                    )
-                    # Also update manifest
-                    self._storage.upload_job_manifest(job)
+                    torch.mps.empty_cache()
                 except Exception as e:
-                    logger.warning(f"Failed to update progress for {job.job_id}: {e}")
+                    logger.debug(f"MPS cache clear failed (non-critical): {e}")
+
+            # Clear CUDA cache if available
+            if torch.cuda.is_available():
+                try:
+                    torch.cuda.empty_cache()
+                except Exception as e:
+                    logger.debug(f"CUDA cache clear failed (non-critical): {e}")
+
+            logger.debug("Pipeline resources released")
 
         return detections
 
