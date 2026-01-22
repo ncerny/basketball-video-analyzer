@@ -90,6 +90,23 @@ class Settings(BaseSettings):
     # When False, detection runs in-process (blocking the API server)
     use_external_worker: bool = True
 
+    # Cloud storage (Cloudflare R2)
+    r2_account_id: str = ""
+    r2_access_key_id: str = ""
+    r2_secret_access_key: str = ""
+    r2_bucket_name: str = "basketball-analyzer"
+
+    @property
+    def r2_endpoint_url(self) -> str:
+        """Generate R2 endpoint URL from account ID."""
+        if not self.r2_account_id:
+            return ""
+        return f"https://{self.r2_account_id}.r2.cloudflarestorage.com"
+
+    # Cloud worker settings
+    cloud_worker_poll_interval: float = 10.0
+    cloud_model_path: str = "/models/sam3"
+
     @property
     def models_dir(self) -> Path:
         path = Path(self.ml_models_path)
