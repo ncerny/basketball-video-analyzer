@@ -1,7 +1,6 @@
 # backend/worker/cli.py
 """CLI for cloud job management: submit, import, status."""
 
-import json
 import sys
 import uuid
 from datetime import datetime, timezone
