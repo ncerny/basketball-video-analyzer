@@ -89,6 +89,33 @@ class SAM3VideoTracker:
             f"device={self._config.device}"
         )
 
+    def _find_model_path(self) -> str:
+        """Find SAM3 model path, checking local paths first.
+
+        Returns:
+            Path to model (local path or HuggingFace model ID).
+        """
+        import os
+
+        # Check paths in order of preference
+        local_paths = [
+            os.environ.get("CLOUD_MODEL_PATH", ""),  # Docker container
+            "/models/sam3",  # Docker default
+            str(Path.home() / ".cache/huggingface/hub/models--facebook--sam3/snapshots"),
+        ]
+
+        for path in local_paths:
+            if path and Path(path).exists():
+                # For HF cache, find the actual snapshot
+                if "snapshots" in path:
+                    snapshots = list(Path(path).iterdir())
+                    if snapshots:
+                        return str(snapshots[0])
+                return path
+
+        # Fall back to HuggingFace download
+        return "facebook/sam3"
+
     def _select_device(self) -> str:
         """Select best available device with fallback chain.
 
@@ -143,14 +170,21 @@ class SAM3VideoTracker:
                 dtype = torch.bfloat16 if self._config.use_half_precision else torch.float32
 
             self._dtype = dtype
-            logger.info(f"Loading SAM3 video model on {self._device} with dtype={dtype}...")
+
+            # Try local model path first (for Docker), then HuggingFace
+            model_path = self._find_model_path()
+            logger.info(f"Loading SAM3 from: {model_path}")
 
             self._model = Sam3VideoModel.from_pretrained(
-                "facebook/sam3",
+                model_path,
                 torch_dtype=dtype,
+                local_files_only=(model_path != "facebook/sam3"),
             ).to(self._device)
 
-            self._processor = Sam3VideoProcessor.from_pretrained("facebook/sam3")
+            self._processor = Sam3VideoProcessor.from_pretrained(
+                model_path,
+                local_files_only=(model_path != "facebook/sam3"),
+            )
 
             logger.info("SAM3 video model loaded successfully")
 
