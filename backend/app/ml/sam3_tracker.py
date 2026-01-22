@@ -6,6 +6,7 @@ player tracking.
 """
 
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generator
@@ -95,8 +96,6 @@ class SAM3VideoTracker:
         Returns:
             Path to model (local path or HuggingFace model ID).
         """
-        import os
-
         # Check paths in order of preference
         local_paths = [
             os.environ.get("CLOUD_MODEL_PATH", ""),  # Docker container
@@ -108,9 +107,21 @@ class SAM3VideoTracker:
             if path and Path(path).exists():
                 # For HF cache, find the actual snapshot
                 if "snapshots" in path:
-                    snapshots = list(Path(path).iterdir())
-                    if snapshots:
-                        return str(snapshots[0])
+                    try:
+                        # Sort by modification time (newest first) for deterministic selection
+                        snapshots = sorted(
+                            Path(path).iterdir(),
+                            key=lambda p: p.stat().st_mtime_ns,
+                            reverse=True,
+                        )
+                        if snapshots:
+                            return str(snapshots[0])
+                    except (PermissionError, OSError) as e:
+                        logger.debug(
+                            f"Failed to traverse HF cache directory {path}: {e}. "
+                            "Trying next path..."
+                        )
+                        continue
                 return path
 
         # Fall back to HuggingFace download
