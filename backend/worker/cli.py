@@ -18,14 +18,27 @@ from worker.cloud_storage import CloudStorage, JobManifest
 def get_storage() -> CloudStorage:
     """Get configured CloudStorage instance."""
     if not settings.r2_account_id:
-        click.echo("Error: R2 not configured. Set R2_ACCOUNT_ID in .env", err=True)
-        raise SystemExit(1)
+        raise click.ClickException("R2 not configured. Set R2_ACCOUNT_ID in .env")
     return CloudStorage(
         account_id=settings.r2_account_id,
         access_key_id=settings.r2_access_key_id,
         secret_access_key=settings.r2_secret_access_key,
         bucket_name=settings.r2_bucket_name,
     )
+
+
+def parse_job_id_from_key(key: str) -> str | None:
+    """Safely parse job ID from S3 key like 'jobs/{job_id}.json'.
+
+    Returns None if the key format is invalid.
+    """
+    parts = key.split("/")
+    if len(parts) < 2:
+        return None
+    job_part = parts[1]
+    if not job_part.endswith(".json"):
+        return None
+    return job_part.replace(".json", "")
 
 
 @click.group()
@@ -41,6 +54,25 @@ def cli():
 @click.option("--confidence", default=0.25, type=float, help="Confidence threshold")
 def submit(video_id: int, video_path: str, sample_interval: int, confidence: float):
     """Submit a video for cloud GPU processing."""
+    import asyncio
+    from sqlalchemy import select
+    from app.database import async_session_maker
+    from app.models.video import Video
+
+    # Validate video exists in database before upload
+    async def check_video_exists():
+        async with async_session_maker() as session:
+            result = await session.execute(select(Video).where(Video.id == video_id))
+            return result.scalar_one_or_none()
+
+    try:
+        video = asyncio.run(check_video_exists())
+    except Exception as e:
+        raise click.ClickException(f"Database error checking video: {e}")
+
+    if not video:
+        raise click.ClickException(f"Video {video_id} not found in database")
+
     storage = get_storage()
     video_path = Path(video_path)
 
@@ -80,9 +112,10 @@ def status():
     jobs = []
     for obj in response.get("Contents", []):
         key = obj["Key"]
-        if not key.endswith(".json"):
+        job_id = parse_job_id_from_key(key)
+        if not job_id:
             continue
-        manifest = storage.get_job_manifest(key.split("/")[1].replace(".json", ""))
+        manifest = storage.get_job_manifest(job_id)
         if manifest:
             jobs.append(manifest)
 
@@ -113,6 +146,38 @@ def status():
         click.echo(f"{job.job_id:<38} {job.video_id:<6} {job.status:<12} {progress:<20}")
 
 
+def validate_detection(det: dict, index: int) -> dict | None:
+    """Validate detection dict has required fields with correct types.
+
+    Returns validated detection dict or None if invalid.
+    Logs warning for invalid detections.
+    """
+    required_fields = ["frame", "track_id", "bbox", "confidence"]
+    for field in required_fields:
+        if field not in det:
+            click.echo(f"Warning: Detection {index} missing required field '{field}', skipping", err=True)
+            return None
+
+    bbox = det.get("bbox")
+    if not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
+        click.echo(f"Warning: Detection {index} has invalid bbox format, skipping", err=True)
+        return None
+
+    try:
+        return {
+            "frame": int(det["frame"]),
+            "track_id": int(det["track_id"]) if det["track_id"] is not None else None,
+            "bbox_x": float(bbox[0]),
+            "bbox_y": float(bbox[1]),
+            "bbox_width": float(bbox[2]),
+            "bbox_height": float(bbox[3]),
+            "confidence": float(det["confidence"]),
+        }
+    except (ValueError, TypeError) as e:
+        click.echo(f"Warning: Detection {index} has invalid data types ({e}), skipping", err=True)
+        return None
+
+
 @cli.command("import-job")
 @click.option("--job-id", required=True, help="Job ID to import")
 @click.option("--cleanup/--no-cleanup", default=True, help="Delete R2 files after import")
@@ -129,22 +194,29 @@ def import_job(job_id: str, cleanup: bool):
     # Check job status
     manifest = storage.get_job_manifest(job_id)
     if not manifest:
-        click.echo(f"Job {job_id} not found", err=True)
-        raise SystemExit(1)
+        raise click.ClickException(f"Job {job_id} not found")
 
     if manifest.status != "completed":
-        click.echo(f"Job {job_id} is not completed (status: {manifest.status})", err=True)
-        raise SystemExit(1)
+        raise click.ClickException(f"Job {job_id} is not completed (status: {manifest.status})")
 
     # Download results
     click.echo(f"Downloading results for job {job_id}...")
     results = storage.download_results(job_id)
     if not results:
-        click.echo(f"No results found for job {job_id}", err=True)
-        raise SystemExit(1)
+        raise click.ClickException(f"No results found for job {job_id}")
 
     detections = results.get("detections", [])
     click.echo(f"Found {len(detections)} detections")
+
+    # Validate all detections before importing
+    validated_detections = []
+    for i, det in enumerate(detections):
+        validated = validate_detection(det, i)
+        if validated:
+            validated_detections.append(validated)
+
+    if len(validated_detections) < len(detections):
+        click.echo(f"Validated {len(validated_detections)}/{len(detections)} detections")
 
     # Import into database
     async def do_import():
@@ -155,27 +227,31 @@ def import_job(job_id: str, cleanup: bool):
             )
             video = video_result.scalar_one_or_none()
             if not video:
-                click.echo(f"Video {manifest.video_id} not found in database", err=True)
-                raise SystemExit(1)
+                raise click.ClickException(f"Video {manifest.video_id} not found in database")
 
             # Insert detections
-            for det in detections:
+            for det in validated_detections:
                 detection = PlayerDetection(
                     video_id=manifest.video_id,
                     frame_number=det["frame"],
                     tracking_id=det["track_id"],
-                    bbox_x=det["bbox"][0],
-                    bbox_y=det["bbox"][1],
-                    bbox_width=det["bbox"][2],
-                    bbox_height=det["bbox"][3],
+                    bbox_x=det["bbox_x"],
+                    bbox_y=det["bbox_y"],
+                    bbox_width=det["bbox_width"],
+                    bbox_height=det["bbox_height"],
                     confidence_score=det["confidence"],
                 )
                 session.add(detection)
 
             await session.commit()
-            click.echo(f"Imported {len(detections)} detections into database")
+            click.echo(f"Imported {len(validated_detections)} detections into database")
 
-    asyncio.run(do_import())
+    try:
+        asyncio.run(do_import())
+    except click.ClickException:
+        raise
+    except Exception as e:
+        raise click.ClickException(f"Database error during import: {e}")
 
     # Update manifest status
     manifest.status = "imported"
@@ -199,9 +275,9 @@ def import_all(cleanup: bool):
     completed = []
     for obj in response.get("Contents", []):
         key = obj["Key"]
-        if not key.endswith(".json"):
+        job_id = parse_job_id_from_key(key)
+        if not job_id:
             continue
-        job_id = key.split("/")[1].replace(".json", "")
         manifest = storage.get_job_manifest(job_id)
         if manifest and manifest.status == "completed":
             completed.append(manifest)
