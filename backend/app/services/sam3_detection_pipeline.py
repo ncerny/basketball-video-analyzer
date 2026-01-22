@@ -40,6 +40,7 @@ class SAM3DetectionPipeline:
             prompt=prompt or settings.sam3_prompt,
             confidence_threshold=confidence_threshold
             or settings.sam3_confidence_threshold,
+            memory_window_size=settings.sam3_memory_window_size,
         )
         self._tracker = SAM3VideoTracker(config)
         self._on_progress = on_progress
@@ -131,8 +132,8 @@ class SAM3DetectionPipeline:
 
             frame_count += 1
 
-            # Commit every 100 frames for checkpointing
-            if frame_count % 100 == 0:
+            # Commit every 30 frames for checkpointing
+            if frame_count % 30 == 0:
                 await db_session.commit()
                 logger.debug(f"Checkpointed at frame {frame_count}")
 

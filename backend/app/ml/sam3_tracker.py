@@ -74,6 +74,7 @@ class SAM3VideoTracker:
             prompt=settings.sam3_prompt,
             confidence_threshold=settings.sam3_confidence_threshold,
             use_half_precision=settings.sam3_use_half_precision,
+            memory_window_size=settings.sam3_memory_window_size,
         )
 
         # Lazy-loaded components
@@ -224,8 +225,11 @@ class SAM3VideoTracker:
 
             # Initialize streaming video session (no video parameter = streaming mode)
             # Use the dtype determined during model loading (float32 on MPS)
+            # inference_state_device="cpu" keeps memory bank/object pointers on CPU
+            # (on unified memory Macs this won't save RAM but may reduce MPS fragmentation)
             inference_session = self._processor.init_video_session(
                 inference_device=self._device,
+                inference_state_device="cpu",
                 processing_device="cpu",
                 video_storage_device="cpu",
                 dtype=self._dtype,
@@ -307,22 +311,27 @@ class SAM3VideoTracker:
         to bound memory usage. Pruning only starts once current_frame_idx
         exceeds window_size.
 
-        Note: The impact on tracking ID stability after pruning starts is
-        not fully characterized. SAM3's memory mechanism may rely on historical
-        context, so pruning could affect object re-identification in later frames.
+        Prunes the following structures (see bbva-4f8 for research):
+        - non_cond_frame_outputs: Per-frame mask/memory features
+        - cond_frame_outputs: Conditioning frame outputs
+        - vision_features cache: Computed image embeddings
+        - processed_frames: Pixel tensors
+        - mask_inputs_per_obj/point_inputs_per_obj: Stored prompts
+        - tracker scores and frame tracking metadata
 
         Args:
             inference_session: The SAM3 video inference session.
             current_frame_idx: Current frame index being processed.
             window_size: Number of recent frames to keep.
         """
+        import gc
+
         if current_frame_idx < window_size:
             return  # Not enough frames yet
 
         cutoff_frame = current_frame_idx - window_size
 
-        # Prune non-conditioning frame outputs for each tracked object
-        # These store masks/memory features per frame and grow unbounded
+        # Prune per-object frame outputs (non-conditioning and conditioning)
         if hasattr(inference_session, "output_dict_per_obj"):
             for obj_idx in list(inference_session.output_dict_per_obj.keys()):
                 obj_outputs = inference_session.output_dict_per_obj[obj_idx]
@@ -336,15 +345,26 @@ class SAM3VideoTracker:
                     for f in frames_to_remove:
                         del non_cond[f]
 
-        # Prune frame-wise tracker scores
+                # NOTE: Do NOT prune cond_frame_outputs - SAM3 needs these for
+                # conditioning context. Pruning causes failures when the window
+                # catches up to the initial prompt frame.
+
+        # NOTE: Do NOT prune these - causes MPS dtype mismatch errors:
+        # - vision_features cache (image embeddings)
+        # - cond_frame_outputs (conditioning context)
+        # - processed_frames (pixel tensors)
+        # - mask_inputs_per_obj / point_inputs_per_obj (prompts)
+
+        # Prune frame-wise tracker scores (metadata only - safe)
         if hasattr(inference_session, "obj_id_to_tracker_score_frame_wise"):
             for obj_id in list(
                 inference_session.obj_id_to_tracker_score_frame_wise.keys()
             ):
                 scores = inference_session.obj_id_to_tracker_score_frame_wise[obj_id]
-                frames_to_remove = [f for f in scores.keys() if f < cutoff_frame]
-                for f in frames_to_remove:
-                    del scores[f]
+                if isinstance(scores, dict):
+                    frames_to_remove = [f for f in scores.keys() if f < cutoff_frame]
+                    for f in frames_to_remove:
+                        del scores[f]
 
         # Prune frames_tracked_per_obj
         if hasattr(inference_session, "frames_tracked_per_obj"):
@@ -354,6 +374,11 @@ class SAM3VideoTracker:
                     inference_session.frames_tracked_per_obj[obj_idx] = {
                         f for f in tracked if f >= cutoff_frame
                     }
+
+        # Force garbage collection
+        # NOTE: Do NOT call torch.mps.empty_cache() here - it causes dtype
+        # mismatch errors in subsequent MPS matrix multiplications
+        gc.collect()
 
     def _convert_to_frame_detections(
         self,
