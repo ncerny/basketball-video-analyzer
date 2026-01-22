@@ -1,8 +1,16 @@
 """Entry point for running the worker as a module.
 
 Usage:
-    cd backend
+    # Local worker (polls SQLite DB)
     python -m worker
+
+    # Cloud worker (polls R2)
+    python -m worker --cloud
+
+    # CLI commands
+    python -m worker.cli submit --video-id 1 --video-path video.mp4
+    python -m worker.cli status
+    python -m worker.cli import-all
 """
 
 import asyncio
@@ -13,9 +21,6 @@ from pathlib import Path
 
 # Add app directory to path so we can import from app.*
 sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from worker.config import WorkerConfig
-from worker.job_processor import JobProcessor
 
 
 def setup_logging() -> None:
@@ -30,19 +35,19 @@ def setup_logging() -> None:
     logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
-async def main() -> None:
-    """Main entry point for the worker."""
-    setup_logging()
-    logger = logging.getLogger("worker")
+async def run_local_worker() -> None:
+    """Run local worker that polls SQLite DB."""
+    from worker.config import WorkerConfig
+    from worker.job_processor import JobProcessor
 
+    logger = logging.getLogger("worker")
     config = WorkerConfig.from_env()
-    logger.info(f"Starting worker {config.worker_id}")
+
+    logger.info(f"Starting LOCAL worker {config.worker_id}")
     logger.info(f"Database: {config.database_url}")
     logger.info(f"Poll interval: {config.poll_interval_seconds}s")
 
     processor = JobProcessor(config)
-
-    # Set up signal handlers for graceful shutdown
     shutdown_event = asyncio.Event()
 
     def signal_handler(sig: int, frame) -> None:
@@ -58,8 +63,27 @@ async def main() -> None:
         logger.exception(f"Worker crashed: {e}")
         sys.exit(1)
 
-    logger.info("Worker shutdown complete")
+    logger.info("Local worker shutdown complete")
+
+
+async def run_cloud_worker() -> None:
+    """Run cloud worker that polls R2."""
+    from worker.cloud_worker import main as cloud_main
+    await cloud_main()
+
+
+def main() -> None:
+    """Main entry point."""
+    setup_logging()
+
+    # Check for --cloud flag
+    cloud_mode = "--cloud" in sys.argv
+
+    if cloud_mode:
+        asyncio.run(run_cloud_worker())
+    else:
+        asyncio.run(run_local_worker())
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
