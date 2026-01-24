@@ -10,6 +10,22 @@
 #     basketball-analyzer-worker
 
 ARG TARGETPLATFORM=linux/amd64
+
+# ============================================================================
+# Stage 1: Export requirements from poetry (small, fast, cached)
+# ============================================================================
+FROM --platform=$TARGETPLATFORM python:3.11-slim AS requirements
+
+WORKDIR /build
+RUN pip install poetry poetry-plugin-export
+
+COPY pyproject.toml poetry.lock* ./
+RUN poetry export --only main,ml,video --without-hashes -f requirements.txt -o requirements.txt
+
+# ============================================================================
+# Stage 2: Runtime image
+# ============================================================================
+ARG TARGETPLATFORM
 FROM --platform=$TARGETPLATFORM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime
 
 WORKDIR /app
@@ -19,19 +35,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     libgl1-mesa-glx \
     libglib2.0-0 \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy SAM3 model EARLY - it's huge (~6GB) but rarely changes
 # This layer gets cached and reused across code changes
 COPY models/sam3 /models/sam3
 
-# Install poetry and dependencies
-# Layer order: pyproject.toml -> install -> code (most cacheable)
-COPY pyproject.toml poetry.lock* ./
+# Copy exported requirements and install with pip (faster than poetry)
+# Using BuildKit cache mount for pip cache across builds
+COPY --from=requirements /build/requirements.txt ./
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install poetry && \
-    poetry config virtualenvs.create false && \
-    poetry install --no-interaction --no-ansi --only main,ml,video --no-root
+    pip install -r requirements.txt
 
 # Copy application code LAST - changes most frequently
 COPY app/ ./app/
