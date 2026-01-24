@@ -9,7 +9,8 @@
 #     -e R2_SECRET_ACCESS_KEY=xxx -e R2_BUCKET_NAME=xxx \
 #     basketball-analyzer-worker
 
-FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime
+# Use PyTorch 2.6 with Python 3.11+ and CUDA 12.4
+FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime
 
 # Set working directory
 WORKDIR /app
