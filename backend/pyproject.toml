@@ -44,7 +44,7 @@ torchvision = ">=0.18.1"
 ultralytics = "^8.3.0"
 numpy = "<2.0.0"  # ultralytics compatibility
 supervision = "^0.23.0"  # Version compatible with numpy <2.0
-transformers = ">=4.49.0"
+transformers = {git = "https://github.com/huggingface/transformers.git", branch = "main"}  # SAM3 requires main branch
 accelerate = ">=0.27.0"
 pillow = ">=10.0.0"
 num2words = ">=0.5.13"

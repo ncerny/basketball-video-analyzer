@@ -4,7 +4,7 @@
 !poetry.lock
 !app/
 !worker/
-!models/sam2/
+!models/sam3/
 
 # Ignore Python cache
 **/__pycache__

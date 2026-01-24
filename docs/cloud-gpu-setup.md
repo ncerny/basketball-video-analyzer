@@ -1,6 +1,6 @@
 # Cloud GPU Worker Setup
 
-This guide covers setting up cloud GPU workers for SAM2 video detection processing.
+This guide covers setting up cloud GPU workers for SAM3 video detection processing.
 
 ## Prerequisites
 
@@ -42,12 +42,12 @@ This guide covers setting up cloud GPU workers for SAM2 video detection processi
 
 ## Building the Docker Image
 
-### Step 1: Download SAM2 Model
+### Step 1: Download SAM3 Model
 
 The model needs to be baked into the Docker image to avoid HuggingFace authentication on the cloud worker.
 
 ```bash
-python -c "from transformers import Sam2VideoModel; Sam2VideoModel.from_pretrained('facebook/sam2-hiera-large')"
+python -c "from transformers import Sam3VideoModel; Sam3VideoModel.from_pretrained('facebook/sam3')"
 ```
 
 This downloads ~6GB to your HuggingFace cache.
@@ -56,10 +56,10 @@ This downloads ~6GB to your HuggingFace cache.
 
 ```bash
 cd backend
-mkdir -p models/sam2
+mkdir -p models/sam3
 
 # Copy from HuggingFace cache
-cp -r ~/.cache/huggingface/hub/models--facebook--sam2-hiera-large/snapshots/* models/sam2/
+cp -r ~/.cache/huggingface/hub/models--facebook--sam3/snapshots/* models/sam3/
 ```
 
 ### Step 3: Build Docker Image
@@ -69,7 +69,7 @@ cd backend
 docker build -f Dockerfile.worker -t basketball-analyzer-worker .
 ```
 
-**Note:** The image will be ~10-15GB due to PyTorch + CUDA + SAM2 model.
+**Note:** The image will be ~10-15GB due to PyTorch + CUDA + SAM3 model.
 
 ### Step 4: Push to Container Registry
 
@@ -157,7 +157,7 @@ poetry run python -m worker.cli status
 Start your cloud GPU instance. The worker will automatically:
 - Poll R2 for pending jobs
 - Download the video
-- Run SAM2 detection
+- Run SAM3 detection
 - Upload results
 - Mark job as completed
 
