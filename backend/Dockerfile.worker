@@ -25,10 +25,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy dependency files first (better caching)
 COPY pyproject.toml poetry.lock* ./
 
-# Install poetry and dependencies
+# Install poetry and dependencies (--no-root skips installing project package)
 RUN pip install poetry && \
     poetry config virtualenvs.create false && \
-    poetry install --no-interaction --no-ansi --only main,ml,video
+    poetry install --no-interaction --no-ansi --only main,ml,video --no-root
 
 # Copy application code
 COPY app/ ./app/
