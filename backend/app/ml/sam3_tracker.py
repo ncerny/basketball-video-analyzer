@@ -99,8 +99,8 @@ class SAM3VideoTracker:
         # Check paths in order of preference
         local_paths = [
             os.environ.get("CLOUD_MODEL_PATH", ""),  # Docker container
-            "/models/sam3",  # Docker default
-            str(Path.home() / ".cache/huggingface/hub/models--facebook--sam3/snapshots"),
+            "/models/sam2",  # Docker default
+            str(Path.home() / ".cache/huggingface/hub/models--facebook--sam2-hiera-large/snapshots"),
         ]
 
         for path in local_paths:
@@ -125,7 +125,7 @@ class SAM3VideoTracker:
                 return path
 
         # Fall back to HuggingFace download
-        return "facebook/sam3"
+        return "facebook/sam2-hiera-large"
 
     def _select_device(self) -> str:
         """Select best available device with fallback chain.
@@ -159,13 +159,13 @@ class SAM3VideoTracker:
             return
 
         try:
-            from transformers import Sam3VideoModel, Sam3VideoProcessor
+            from transformers import Sam2VideoModel, Sam2VideoProcessor
 
             # Apply cv_utils fallback for non-CUDA devices (e.g., MPS)
             # This provides NMS and connected components in pure PyTorch
-            from .cv_utils_fallback import patch_sam3_cv_utils
+            from .cv_utils_fallback import patch_sam2_cv_utils
 
-            patch_sam3_cv_utils()
+            patch_sam2_cv_utils()
 
             self._device = self._select_device()
 
@@ -184,25 +184,25 @@ class SAM3VideoTracker:
 
             # Try local model path first (for Docker), then HuggingFace
             model_path = self._find_model_path()
-            logger.info(f"Loading SAM3 from: {model_path}")
+            logger.info(f"Loading SAM2 from: {model_path}")
 
-            self._model = Sam3VideoModel.from_pretrained(
+            self._model = Sam2VideoModel.from_pretrained(
                 model_path,
                 torch_dtype=dtype,
-                local_files_only=(model_path != "facebook/sam3"),
+                local_files_only=(model_path != "facebook/sam2-hiera-large"),
             ).to(self._device)
 
-            self._processor = Sam3VideoProcessor.from_pretrained(
+            self._processor = Sam2VideoProcessor.from_pretrained(
                 model_path,
-                local_files_only=(model_path != "facebook/sam3"),
+                local_files_only=(model_path != "facebook/sam2-hiera-large"),
             )
 
-            logger.info("SAM3 video model loaded successfully")
+            logger.info("SAM2 video model loaded successfully")
 
         except ImportError as e:
             raise ImportError(
-                "SAM3 not installed. Install with: "
-                "uv pip install transformers>=4.48"
+                "SAM2 not installed. Install with: "
+                "pip install transformers>=4.49"
             ) from e
 
     def process_video(

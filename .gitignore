@@ -154,3 +154,5 @@ $RECYCLE.BIN/
 
 # Git worktrees
 .worktrees/
+
+backend/models

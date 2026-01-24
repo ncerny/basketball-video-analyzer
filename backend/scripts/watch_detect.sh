@@ -14,7 +14,7 @@ while [[ $status -eq "processing" ]]; do
     status=$(echo $result | jq -r .status)
     percentage=$(echo $result | jq .progress.percentage)
     message=$(echo $result | jq .progress.message)
-    echo "Current job ${status}: ${percentage}% complete (${message})"
+    echo "[$(date "+%Y-%m-%d %H:%M:%S")] Current job ${status}: ${percentage}% complete (${message})"
     sleep 5
 done
 

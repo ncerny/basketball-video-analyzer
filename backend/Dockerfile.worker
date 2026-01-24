@@ -21,9 +21,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy SAM3 model EARLY - it's huge (~6GB) but rarely changes
+# Copy SAM2 model EARLY - it's huge (~6GB) but rarely changes
 # This layer gets cached and reused across code changes
-COPY models/sam3 /models/sam3
+COPY models/sam2 /models/sam2
 
 # Install poetry and dependencies
 # Layer order: pyproject.toml -> install -> code (most cacheable)
@@ -39,6 +39,6 @@ COPY worker/ ./worker/
 
 # Environment
 ENV PYTHONPATH=/app
-ENV CLOUD_MODEL_PATH=/models/sam3
+ENV CLOUD_MODEL_PATH=/models/sam2
 
 CMD ["python", "-m", "worker", "--cloud"]

@@ -187,30 +187,34 @@ class CvUtilsFallback:
         self.cc_2d = cc_2d
 
 
-def patch_sam3_cv_utils() -> bool:
-    """Patch SAM3 to use fallback cv_utils when CUDA kernel is unavailable.
+def patch_sam2_cv_utils() -> bool:
+    """Patch SAM2 to use fallback cv_utils when CUDA kernel is unavailable.
 
-    This patches the cv_utils_kernel global in the SAM3 video model to use
+    This patches the cv_utils_kernel global in the SAM2 video model to use
     our pure PyTorch implementations.
 
     Returns:
         True if patch was applied, False if cv_utils was already working.
     """
     try:
-        from transformers.models.sam3_video import modeling_sam3_video
+        from transformers.models.sam2_video import modeling_sam2_video
 
         # First, try to load the actual cv_utils kernel
-        modeling_sam3_video._load_cv_utils_kernel_once()
+        modeling_sam2_video._load_cv_utils_kernel_once()
 
-        if modeling_sam3_video.cv_utils_kernel:
+        if modeling_sam2_video.cv_utils_kernel:
             logger.info("cv_utils kernel loaded successfully, no patch needed")
             return False
 
         # cv_utils failed, apply our fallback
         logger.info("cv_utils kernel not available, applying PyTorch fallback")
-        modeling_sam3_video.cv_utils_kernel = CvUtilsFallback()
+        modeling_sam2_video.cv_utils_kernel = CvUtilsFallback()
         return True
 
     except ImportError as e:
-        logger.warning(f"Could not patch SAM3 cv_utils: {e}")
+        logger.warning(f"Could not patch SAM2 cv_utils: {e}")
         return False
+
+
+# Keep old name as alias for compatibility
+patch_sam3_cv_utils = patch_sam2_cv_utils
