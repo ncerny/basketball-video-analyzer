@@ -12,18 +12,18 @@
 # ============================================================================
 # Stage 1: Export requirements from poetry (small, fast)
 # ============================================================================
-FROM python:3.11-slim AS requirements
+FROM --platform=linux/amd64 python:3.11-slim AS requirements
 
 WORKDIR /build
-RUN pip install poetry
+RUN pip install poetry poetry-plugin-export
 
 COPY pyproject.toml poetry.lock* ./
 RUN poetry export --only main,ml,video --without-hashes -f requirements.txt -o requirements.txt
 
 # ============================================================================
-# Stage 2: Runtime image
+# Stage 2: Runtime image (AMD64 for CUDA GPU cloud instances)
 # ============================================================================
-FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime
+FROM --platform=linux/amd64 pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime
 
 WORKDIR /app
 
