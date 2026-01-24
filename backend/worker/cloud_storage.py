@@ -113,6 +113,18 @@ class CloudStorage:
             Exception: If download fails.
         """
         key = f"videos/{job_id}{suffix}"
+        self.download_video_by_key(key, dest_path)
+
+    def download_video_by_key(self, key: str, dest_path: Path) -> None:
+        """Download video file from R2 by full key.
+
+        Args:
+            key: Full R2 key (e.g., 'videos/job-id.mov').
+            dest_path: Local destination path.
+
+        Raises:
+            Exception: If download fails.
+        """
         logger.info(f"Downloading video from {key}...")
         try:
             self._client.download_file(self._bucket, key, str(dest_path))

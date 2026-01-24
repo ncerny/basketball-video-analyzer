@@ -100,11 +100,14 @@ class CloudWorker:
 
         # Download video to temp file
         with tempfile.TemporaryDirectory() as tmpdir:
-            video_path = Path(tmpdir) / f"{job.job_id}.mp4"
+            # Get video key from manifest (includes correct extension)
+            video_key = job.parameters.get("video_key", f"videos/{job.job_id}.mp4")
+            video_suffix = Path(video_key).suffix or ".mp4"
+            video_path = Path(tmpdir) / f"{job.job_id}{video_suffix}"
             try:
-                logger.info(f"Downloading video for job {job.job_id}...")
+                logger.info(f"Downloading video for job {job.job_id} from {video_key}...")
                 await asyncio.to_thread(
-                    self._storage.download_video, job.job_id, video_path
+                    self._storage.download_video_by_key, video_key, video_path
                 )
             except Exception as e:
                 logger.error(f"Video download failed for job {job.job_id}: {e}")
