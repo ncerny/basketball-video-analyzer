@@ -41,6 +41,8 @@ class SAM3DetectionPipeline:
             confidence_threshold=confidence_threshold
             or settings.sam3_confidence_threshold,
             memory_window_size=settings.sam3_memory_window_size,
+            use_half_precision=settings.sam3_use_half_precision,
+            use_torch_compile=settings.sam3_use_torch_compile,
         )
         self._tracker = SAM3VideoTracker(config)
         self._on_progress = on_progress
