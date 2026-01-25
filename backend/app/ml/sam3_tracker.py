@@ -161,11 +161,12 @@ class SAM3VideoTracker:
         try:
             from transformers import Sam3VideoModel, Sam3VideoProcessor
 
-            # Apply cv_utils fallback for non-CUDA devices (e.g., MPS)
-            # This provides NMS and connected components in pure PyTorch
-            from .cv_utils_fallback import patch_sam3_cv_utils
-
-            patch_sam3_cv_utils()
+            # Apply cv_utils fallback only for non-CUDA devices (e.g., MPS)
+            # CUDA has native cv_utils kernel support
+            import torch
+            if not torch.cuda.is_available():
+                from .cv_utils_fallback import patch_sam3_cv_utils
+                patch_sam3_cv_utils()
 
             self._device = self._select_device()
 
