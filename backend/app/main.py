@@ -89,6 +89,7 @@ async def monitor_cloud_jobs() -> None:
             # Scan all jobs
             has_work = False
             completed_jobs = []
+            job_statuses = []
 
             response = storage._client.list_objects_v2(
                 Bucket=storage._bucket, Prefix="jobs/"
@@ -101,10 +102,15 @@ async def monitor_cloud_jobs() -> None:
                 if not manifest:
                     continue
 
+                job_statuses.append(f"{job_id[:8]}:{manifest.status}")
+
                 if manifest.status in ("pending", "processing"):
                     has_work = True
                 elif manifest.status == "completed":
                     completed_jobs.append(manifest)
+
+            if job_statuses:
+                logger.info(f"Cloud jobs: {', '.join(job_statuses)}")
 
             # Import completed jobs
             for manifest in completed_jobs:
@@ -121,12 +127,15 @@ async def monitor_cloud_jobs() -> None:
                     logger.error(f"Failed to auto-import job {manifest.job_id}: {e}")
 
             # Stop pod if no work remains
-            if runpod and not has_work and runpod.is_pod_running():
-                logger.info("No pending/processing jobs, stopping RunPod to save costs...")
-                if runpod.stop_pod():
-                    logger.info("RunPod pod stop requested")
-                else:
-                    logger.warning("Failed to stop RunPod pod")
+            if not has_work:
+                if not runpod:
+                    logger.debug("No work remaining, but RUNPOD_API_KEY not configured")
+                elif runpod.is_pod_running():
+                    logger.info("No pending/processing jobs, stopping RunPod to save costs...")
+                    if runpod.stop_pod():
+                        logger.info("RunPod pod stop requested")
+                    else:
+                        logger.warning("Failed to stop RunPod pod")
 
         except Exception as e:
             logger.warning(f"Error in cloud job monitor: {e}")
