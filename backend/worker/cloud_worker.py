@@ -37,6 +37,14 @@ class CloudWorker:
         """
         logger.info(f"Cloud worker {self._worker_id} starting...")
 
+        # Reset any orphaned jobs from previous crashed workers
+        try:
+            reset_jobs = await asyncio.to_thread(self._storage.reset_orphaned_jobs)
+            if reset_jobs:
+                logger.info(f"Reset {len(reset_jobs)} orphaned jobs: {reset_jobs}")
+        except Exception as e:
+            logger.warning(f"Failed to reset orphaned jobs: {e}")
+
         while not shutdown_event.is_set():
             # Poll for pending jobs (wrap blocking I/O in thread for proper async)
             try:
@@ -187,7 +195,8 @@ class CloudWorker:
                             total_frames,
                             f"Processing frame {frame_count}/{total_frames}",
                         )
-                        # Also update manifest
+                        # Update heartbeat and manifest
+                        job.last_heartbeat = datetime.now(timezone.utc).isoformat()
                         await asyncio.to_thread(
                             self._storage.upload_job_manifest, job
                         )

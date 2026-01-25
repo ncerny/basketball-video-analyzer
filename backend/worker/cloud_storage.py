@@ -27,6 +27,7 @@ class JobManifest:
     error: str | None = None
     frames_processed: int = 0
     worker_id: str | None = None
+    last_heartbeat: str | None = None  # Updated on each progress update
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -40,6 +41,7 @@ class JobManifest:
             "error": self.error,
             "frames_processed": self.frames_processed,
             "worker_id": self.worker_id,
+            "last_heartbeat": self.last_heartbeat,
         }
 
     @classmethod
@@ -55,6 +57,7 @@ class JobManifest:
             error=data.get("error"),
             frames_processed=data.get("frames_processed", 0),
             worker_id=data.get("worker_id"),
+            last_heartbeat=data.get("last_heartbeat"),
         )
 
 
@@ -183,6 +186,65 @@ class CloudStorage:
             except Exception as e:
                 logger.warning(f"Failed to read job manifest {key}: {e}")
         return sorted(jobs, key=lambda j: j.created_at)
+
+    def reset_orphaned_jobs(self, stale_minutes: int = 10) -> list[str]:
+        """Reset orphaned 'processing' jobs back to 'pending'.
+
+        A job is considered orphaned if it's been processing for longer than
+        stale_minutes without a heartbeat update.
+
+        Args:
+            stale_minutes: Minutes without heartbeat before job is orphaned.
+
+        Returns:
+            List of job IDs that were reset.
+        """
+        from datetime import datetime, timezone
+
+        reset_jobs = []
+        now = datetime.now(timezone.utc)
+        cutoff = now.timestamp() - (stale_minutes * 60)
+
+        response = self._client.list_objects_v2(Bucket=self._bucket, Prefix="jobs/")
+        for obj in response.get("Contents", []):
+            key = obj["Key"]
+            if not key.endswith(".json"):
+                continue
+            try:
+                manifest_response = self._client.get_object(Bucket=self._bucket, Key=key)
+                data = json.loads(manifest_response["Body"].read().decode("utf-8"))
+                manifest = JobManifest.from_dict(data)
+
+                if manifest.status != "processing":
+                    continue
+
+                # Check heartbeat (fall back to started_at if no heartbeat)
+                check_time = manifest.last_heartbeat or manifest.started_at
+                if check_time:
+                    try:
+                        job_time = datetime.fromisoformat(check_time.replace("Z", "+00:00"))
+                        if job_time.timestamp() > cutoff:
+                            continue  # Not stale yet
+                    except ValueError:
+                        pass  # Invalid timestamp, consider it stale
+
+                # Reset to pending
+                logger.warning(
+                    f"Resetting orphaned job {manifest.job_id} "
+                    f"(was processing since {manifest.started_at}, "
+                    f"last heartbeat: {manifest.last_heartbeat})"
+                )
+                manifest.status = "pending"
+                manifest.started_at = None
+                manifest.last_heartbeat = None
+                manifest.worker_id = None
+                self.upload_job_manifest(manifest)
+                reset_jobs.append(manifest.job_id)
+
+            except Exception as e:
+                logger.warning(f"Failed to check job manifest {key}: {e}")
+
+        return reset_jobs
 
     def upload_results(self, job_id: str, results: dict[str, Any]) -> None:
         """Upload detection results to R2.
