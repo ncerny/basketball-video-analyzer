@@ -42,7 +42,7 @@ COPY models/sam3 /models/sam3
 # Copy exported requirements and install with pip (faster than poetry)
 # Filter out packages already in pytorch base image (torch, nvidia CUDA libs, etc.)
 COPY --from=requirements /build/requirements.txt ./
-RUN grep -vE "^(torch|triton|nvidia-|numpy|pillow|sympy|networkx|fsspec|filelock)" requirements.txt > requirements-filtered.txt && \
+RUN grep -vE "^(torch|triton|nvidia-|numpy|pillow|sympy|networkx|fsspec|filelock|cffi|ipython|typing-extensions|pyyaml|markupsafe|jinja2|certifi|charset-normalizer|idna|urllib3|requests|packaging|pyparsing|mpmath)" requirements.txt > requirements-filtered.txt && \
     mv requirements-filtered.txt requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements.txt
