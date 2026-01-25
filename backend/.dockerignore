@@ -5,6 +5,7 @@
 !app/
 !worker/
 !models/sam3/
+!patches/
 
 # Ignore Python cache
 **/__pycache__
