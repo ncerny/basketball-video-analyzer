@@ -43,6 +43,35 @@ class SAM3FrameExtractor:
         """
         self.jpeg_quality = jpeg_quality
 
+    def get_video_frame_count(
+        self,
+        video_path: Path,
+        sample_interval: int = 1,
+    ) -> int:
+        """Get estimated frame count from video metadata.
+
+        This is a fast probe that doesn't read all frames.
+
+        Args:
+            video_path: Path to video file.
+            sample_interval: If > 1, returns count of sampled frames.
+
+        Returns:
+            Estimated number of frames (or sampled frames if interval > 1).
+        """
+        cap = cv2.VideoCapture(str(video_path))
+        if not cap.isOpened():
+            return -1
+
+        try:
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            if total_frames <= 0:
+                return -1
+            # Adjust for sample interval
+            return (total_frames + sample_interval - 1) // sample_interval
+        finally:
+            cap.release()
+
     def extract_frames(
         self,
         video_path: Path,

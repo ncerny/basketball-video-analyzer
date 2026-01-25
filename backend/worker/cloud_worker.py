@@ -143,13 +143,17 @@ class CloudWorker:
         Returns:
             List of detection dicts.
         """
+        from app.ml.sam3_frame_extractor import SAM3FrameExtractor
         from app.services.sam3_detection_pipeline import SAM3DetectionPipeline
 
         params = job.parameters
         sample_interval = params.get("sample_interval", 1)
         confidence = params.get("confidence_threshold", 0.25)
 
-        logger.info(f"Starting SAM3 detection (sample_interval={sample_interval})")
+        # Get total frame count for progress reporting
+        extractor = SAM3FrameExtractor()
+        total_frames = extractor.get_video_frame_count(video_path, sample_interval)
+        logger.info(f"Starting SAM3 detection (sample_interval={sample_interval}, total_frames={total_frames})")
 
         # Initialize pipeline inside try block to ensure job state is correct on failure
         pipeline = None
@@ -180,8 +184,8 @@ class CloudWorker:
                             self._storage.update_status,
                             job.job_id,
                             frame_count,
-                            -1,  # Unknown total
-                            f"Processing frame {frame_count}",
+                            total_frames,
+                            f"Processing frame {frame_count}/{total_frames}",
                         )
                         # Also update manifest
                         await asyncio.to_thread(
