@@ -86,8 +86,17 @@ async def monitor_cloud_jobs() -> None:
                 bucket_name=settings.r2_bucket_name,
             )
 
+            # Reset orphaned jobs (processing but no heartbeat for 10+ minutes)
+            try:
+                reset_jobs = storage.reset_orphaned_jobs(stale_minutes=10)
+                if reset_jobs:
+                    logger.info(f"Reset {len(reset_jobs)} orphaned jobs: {reset_jobs}")
+            except Exception as e:
+                logger.warning(f"Failed to reset orphaned jobs: {e}")
+
             # Scan all jobs
             has_work = False
+            pending_jobs = 0
             completed_jobs = []
             job_statuses = []
 
@@ -104,7 +113,10 @@ async def monitor_cloud_jobs() -> None:
 
                 job_statuses.append(f"{job_id[:8]}:{manifest.status}")
 
-                if manifest.status in ("pending", "processing"):
+                if manifest.status == "pending":
+                    has_work = True
+                    pending_jobs += 1
+                elif manifest.status == "processing":
                     has_work = True
                 elif manifest.status == "completed":
                     completed_jobs.append(manifest)
@@ -126,19 +138,30 @@ async def monitor_cloud_jobs() -> None:
                 except Exception as e:
                     logger.error(f"Failed to auto-import job {manifest.job_id}: {e}")
 
-            # Stop pod if no work remains
-            if not has_work:
-                if not runpod:
-                    logger.info("No work remaining, but RUNPOD_API_KEY not configured")
-                else:
-                    pod_running = runpod.is_pod_running()
-                    logger.info(f"No work remaining, pod running: {pod_running}")
-                    if pod_running:
-                        logger.info("Stopping RunPod to save costs...")
-                        if runpod.stop_pod():
-                            logger.info("RunPod pod stop requested")
-                        else:
-                            logger.warning("Failed to stop RunPod pod")
+            # Manage pod based on work status
+            if runpod:
+                pod_running = runpod.is_pod_running()
+
+                if has_work and pending_jobs > 0 and not pod_running:
+                    # Work waiting but no pod - start one
+                    logger.info(f"{pending_jobs} pending job(s), starting RunPod...")
+                    if runpod.start_pod():
+                        logger.info("RunPod pod started")
+                    else:
+                        logger.warning("Failed to start RunPod pod")
+
+                elif not has_work and pod_running:
+                    # No work but pod running - stop it
+                    logger.info("No work remaining, stopping RunPod to save costs...")
+                    if runpod.stop_pod():
+                        logger.info("RunPod pod stop requested")
+                    else:
+                        logger.warning("Failed to stop RunPod pod")
+
+                elif not has_work:
+                    logger.debug("No work remaining, pod already stopped")
+            elif not has_work:
+                logger.info("No work remaining, but RUNPOD_API_KEY not configured")
 
         except Exception as e:
             logger.warning(f"Error in cloud job monitor: {e}")
