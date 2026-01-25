@@ -129,13 +129,16 @@ async def monitor_cloud_jobs() -> None:
             # Stop pod if no work remains
             if not has_work:
                 if not runpod:
-                    logger.debug("No work remaining, but RUNPOD_API_KEY not configured")
-                elif runpod.is_pod_running():
-                    logger.info("No pending/processing jobs, stopping RunPod to save costs...")
-                    if runpod.stop_pod():
-                        logger.info("RunPod pod stop requested")
-                    else:
-                        logger.warning("Failed to stop RunPod pod")
+                    logger.info("No work remaining, but RUNPOD_API_KEY not configured")
+                else:
+                    pod_running = runpod.is_pod_running()
+                    logger.info(f"No work remaining, pod running: {pod_running}")
+                    if pod_running:
+                        logger.info("Stopping RunPod to save costs...")
+                        if runpod.stop_pod():
+                            logger.info("RunPod pod stop requested")
+                        else:
+                            logger.warning("Failed to stop RunPod pod")
 
         except Exception as e:
             logger.warning(f"Error in cloud job monitor: {e}")
