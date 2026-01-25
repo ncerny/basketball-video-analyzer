@@ -107,6 +107,13 @@ class Settings(BaseSettings):
     cloud_worker_poll_interval: float = 10.0
     cloud_model_path: str = "/models/sam3"
 
+    # RunPod settings
+    runpod_api_key: str = ""
+    runpod_template_id: str = ""  # Template with our Docker image
+    runpod_gpu_preferences: str = "NVIDIA RTX 4090,NVIDIA RTX A5000,NVIDIA RTX 3090"  # Comma-separated, in order of preference
+    runpod_container_disk_gb: int = 50
+    runpod_volume_disk_gb: int = 0  # 0 = no persistent volume
+
     @property
     def models_dir(self) -> Path:
         path = Path(self.ml_models_path)
