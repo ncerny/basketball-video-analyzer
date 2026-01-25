@@ -9,12 +9,10 @@
 #     -e R2_SECRET_ACCESS_KEY=xxx -e R2_BUCKET_NAME=xxx \
 #     basketball-analyzer-worker
 
-ARG TARGETPLATFORM=linux/amd64
-
 # ============================================================================
 # Stage 1: Export requirements from poetry (small, fast, cached)
 # ============================================================================
-FROM --platform=$TARGETPLATFORM python:3.11-slim AS requirements
+FROM python:3.11-slim AS requirements
 
 WORKDIR /build
 RUN pip install poetry poetry-plugin-export
@@ -25,8 +23,7 @@ RUN poetry export --only main,ml,video --without-hashes -f requirements.txt -o r
 # ============================================================================
 # Stage 2: Runtime image
 # ============================================================================
-ARG TARGETPLATFORM
-FROM --platform=$TARGETPLATFORM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime
+FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime
 
 WORKDIR /app
 
