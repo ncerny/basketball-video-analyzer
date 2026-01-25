@@ -111,6 +111,12 @@ async def import_job_results(
         )
         session.add(detection)
 
+    # Save R2 video key to Video record for streaming
+    video_key = manifest.parameters.get("video_key")
+    if video_key:
+        video.r2_key = video_key
+        logger.info(f"Saved R2 key '{video_key}' to video {video.id}")
+
     await session.commit()
     logger.info(f"Imported {len(validated_detections)} detections for job {manifest.job_id}")
 

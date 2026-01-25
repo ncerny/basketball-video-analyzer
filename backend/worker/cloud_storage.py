@@ -350,9 +350,16 @@ class CloudStorage:
         except self._client.exceptions.ClientError:
             return False
 
-    def delete_job_files(self, job_id: str) -> None:
-        """Delete all files for a job (cleanup after import)."""
-        prefixes = [f"videos/{job_id}", f"jobs/{job_id}", f"results/{job_id}", f"status/{job_id}"]
+    def delete_job_files(self, job_id: str, keep_video: bool = True) -> None:
+        """Delete job files (cleanup after import).
+
+        Args:
+            job_id: Job ID to clean up.
+            keep_video: If True, preserves video file for streaming. Default True.
+        """
+        prefixes = [f"jobs/{job_id}", f"results/{job_id}", f"status/{job_id}"]
+        if not keep_video:
+            prefixes.insert(0, f"videos/{job_id}")
         deleted_count = 0
         for prefix in prefixes:
             response = self._client.list_objects_v2(Bucket=self._bucket, Prefix=prefix)
