@@ -102,10 +102,29 @@ class RunPodService:
                 name = pod.get("name", "")
                 # Our pods are named "bva-worker-{timestamp}"
                 if name.startswith("bva-worker-"):
+                    # Check actual runtime status, not just desiredStatus
+                    # Runtime contains actual state info when pod is live
+                    runtime = pod.get("runtime")
+                    if runtime:
+                        # Pod has runtime info - check actual uptime
+                        uptime = runtime.get("uptimeInSeconds", 0)
+                        actual_status = "RUNNING" if uptime > 0 else "STARTING"
+                    else:
+                        # No runtime = not actually running (crashed, exited, etc.)
+                        actual_status = pod.get("desiredStatus", "UNKNOWN")
+                        if actual_status == "RUNNING":
+                            # Desired is RUNNING but no runtime = crashed/not started
+                            actual_status = "NOT_RUNNING"
+
+                    logger.debug(
+                        f"Pod {pod['id']}: desired={pod.get('desiredStatus')}, "
+                        f"runtime={runtime is not None}, actual={actual_status}"
+                    )
+
                     pods.append(PodStatus(
                         pod_id=pod["id"],
                         name=name,
-                        status=pod.get("desiredStatus", "UNKNOWN"),
+                        status=actual_status,
                         gpu_type=pod.get("machine", {}).get("gpuDisplayName"),
                         cost_per_hour=pod.get("costPerHr"),
                     ))
