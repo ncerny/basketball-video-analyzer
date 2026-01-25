@@ -4,7 +4,8 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,9 +13,17 @@ from app.config import settings
 from app.database import get_db
 from app.models.video import ProcessingStatus, Video as VideoModel
 from app.schemas.video import Video, VideoCreate, VideoList, VideoUpdate
+from app.services.r2_storage import get_r2_storage_service
 from app.services.thumbnail_generator import ThumbnailGeneratorService
 
 router = APIRouter(prefix="/videos", tags=["videos"])
+
+
+class StreamUrlResponse(BaseModel):
+    """Response for presigned stream URL."""
+
+    url: str
+    expires_in: int  # seconds
 
 
 @router.post("", response_model=Video, status_code=status.HTTP_201_CREATED)
@@ -182,15 +191,54 @@ async def delete_video(
     await db.commit()
 
 
-@router.get("/{video_id}/stream")
+@router.get("/{video_id}/stream-url", response_model=StreamUrlResponse)
+async def get_stream_url(
+    video_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    expires_in: Annotated[int, Query(ge=60, le=86400, description="URL expiration in seconds")] = 14400,
+) -> StreamUrlResponse:
+    """Get a presigned URL for streaming a video from R2.
+
+    Returns a time-limited URL that can be used directly by the browser
+    for video playback. Default expiration is 4 hours (14400 seconds).
+    """
+    stmt = select(VideoModel).where(VideoModel.id == video_id)
+    result = await db.execute(stmt)
+    video = result.scalar_one_or_none()
+
+    if not video:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Video with id {video_id} not found",
+        )
+
+    if not video.r2_key:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Video {video_id} is not stored in R2 cloud storage",
+        )
+
+    r2_service = get_r2_storage_service()
+    if not r2_service.is_configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="R2 cloud storage is not configured",
+        )
+
+    url = r2_service.generate_presigned_url(video.r2_key, expires_in)
+    return StreamUrlResponse(url=url, expires_in=expires_in)
+
+
+@router.get("/{video_id}/stream", response_model=None)
 async def stream_video(
     video_id: int,
     request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> StreamingResponse:
+):
     """Stream video file with support for range requests (seeking).
 
-    Supports HTTP Range requests for video seeking in browsers.
+    For R2-stored videos, redirects to a presigned URL.
+    For local videos, streams with HTTP Range request support.
     """
     # Get video
     stmt = select(VideoModel).where(VideoModel.id == video_id)
@@ -203,7 +251,14 @@ async def stream_video(
             detail=f"Video with id {video_id} not found",
         )
 
-    # Get absolute path to video file
+    # If video is in R2, redirect to presigned URL
+    if video.r2_key:
+        r2_service = get_r2_storage_service()
+        if r2_service.is_configured:
+            url = r2_service.generate_presigned_url(video.r2_key)
+            return RedirectResponse(url=url, status_code=302)
+
+    # Fall back to local file streaming
     video_path = Path(settings.video_storage_path) / video.file_path
 
     if not video_path.exists():

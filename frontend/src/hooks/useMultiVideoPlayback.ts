@@ -11,6 +11,7 @@
 
 import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import { useTimelineStore } from '../store/timelineStore';
+import { videosAPI } from '../api/videos';
 import type { Video } from '../types/timeline';
 
 interface VideoElement {
@@ -18,6 +19,8 @@ interface VideoElement {
   videoData: Video;
   isPreBuffered: boolean;
   lastUsedTime: number; // Track when video was last used for memory management
+  presignedUrl?: string; // Cached presigned URL for R2 videos
+  presignedUrlExpiresAt?: number; // Timestamp when presigned URL expires
 }
 
 interface UseMultiVideoPlaybackOptions {
@@ -149,17 +152,77 @@ export const useMultiVideoPlayback = (
   }, [videos]);
 
   /**
+   * Get the video source URL for a video
+   * For R2 videos, fetches a presigned URL
+   * For local videos, returns the /stream endpoint
+   */
+  const getVideoSourceUrl = useCallback(async (videoData: Video): Promise<{ url: string; expiresAt?: number }> => {
+    const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+    // For R2 videos, try to get a presigned URL
+    if (videoData.r2_key) {
+      try {
+        const { url, expires_in } = await videosAPI.getStreamUrl(videoData.id);
+        const expiresAt = Date.now() + (expires_in * 1000) - 60000; // Subtract 1 minute buffer
+        return { url, expiresAt };
+      } catch (error) {
+        console.warn(`Failed to get presigned URL for video ${videoData.id}, falling back to stream endpoint:`, error);
+        // Fall back to stream endpoint (which will redirect to presigned URL)
+        return { url: `${API_BASE_URL}/api/videos/${videoData.id}/stream` };
+      }
+    }
+
+    // For local videos, use the stream endpoint
+    return { url: `${API_BASE_URL}/api/videos/${videoData.id}/stream` };
+  }, []);
+
+  /**
+   * Refresh the presigned URL for a video element
+   */
+  const refreshPresignedUrl = useCallback(async (videoElement: VideoElement) => {
+    if (!videoElement.videoData.r2_key) return;
+
+    try {
+      const { url, expiresAt } = await getVideoSourceUrl(videoElement.videoData);
+      videoElement.presignedUrl = url;
+      videoElement.presignedUrlExpiresAt = expiresAt;
+
+      // Update the video source
+      const currentTime = videoElement.video.currentTime;
+      const wasPlaying = !videoElement.video.paused;
+
+      videoElement.video.src = url;
+      videoElement.video.load();
+
+      // Restore playback position after source change
+      videoElement.video.addEventListener('loadedmetadata', () => {
+        videoElement.video.currentTime = currentTime;
+        if (wasPlaying) {
+          videoElement.video.play().catch(() => {});
+        }
+      }, { once: true });
+
+      console.log(`Refreshed presigned URL for video ${videoElement.videoData.id}`);
+    } catch (error) {
+      console.error(`Failed to refresh presigned URL for video ${videoElement.videoData.id}:`, error);
+    }
+  }, [getVideoSourceUrl]);
+
+  /**
    * Create a video element for a video file
    */
-  const createVideoElement = useCallback((videoData: Video, callbacks: { onBuffering?: () => void; onBuffered?: () => void }): HTMLVideoElement => {
+  const createVideoElement = useCallback(async (
+    videoData: Video,
+    callbacks: { onBuffering?: () => void; onBuffered?: () => void }
+  ): Promise<{ element: HTMLVideoElement; presignedUrl?: string; expiresAt?: number }> => {
     const video = document.createElement('video');
     video.preload = 'auto'; // Preload the entire video for smoother playback
     video.playsInline = true;
     video.muted = false;
 
-    // Use the backend streaming endpoint
-    const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-    video.src = `${API_BASE_URL}/api/videos/${videoData.id}/stream`;
+    // Get the video source URL (presigned for R2, /stream for local)
+    const { url, expiresAt } = await getVideoSourceUrl(videoData);
+    video.src = url;
 
     // Add event listeners for buffering detection
     video.addEventListener('waiting', () => {
@@ -178,8 +241,21 @@ export const useMultiVideoPlayback = (
       callbacks.onBuffered?.();
     });
 
-    return video;
-  }, []);
+    // Handle 403 errors (expired presigned URL) by refreshing
+    video.addEventListener('error', async () => {
+      const error = video.error;
+      // MediaError code 4 is MEDIA_ERR_SRC_NOT_SUPPORTED, which includes 403
+      if (error && error.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED && videoData.r2_key) {
+        console.warn(`Video source error for ${videoData.id}, attempting to refresh presigned URL`);
+        const videoEl = videoElementsRef.current.get(videoData.id);
+        if (videoEl) {
+          await refreshPresignedUrl(videoEl);
+        }
+      }
+    });
+
+    return { element: video, presignedUrl: videoData.r2_key ? url : undefined, expiresAt };
+  }, [getVideoSourceUrl, refreshPresignedUrl]);
 
   /**
    * Load video files and create video elements
@@ -193,14 +269,27 @@ export const useMultiVideoPlayback = (
     });
     videoElementsRef.current.clear();
 
-    // Create video elements for all videos
-    for (const videoData of videosToLoad) {
-      const video = createVideoElement(videoData, { onBuffering, onBuffered });
+    // Create video elements for all videos (in parallel for efficiency)
+    const createPromises = videosToLoad.map(async (videoData) => {
+      const { element, presignedUrl, expiresAt } = await createVideoElement(videoData, { onBuffering, onBuffered });
+      return {
+        videoData,
+        element,
+        presignedUrl,
+        expiresAt,
+      };
+    });
+
+    const results = await Promise.all(createPromises);
+
+    for (const { videoData, element, presignedUrl, expiresAt } of results) {
       videoElementsRef.current.set(videoData.id, {
-        video,
+        video: element,
         videoData,
         isPreBuffered: false,
         lastUsedTime: Date.now(),
+        presignedUrl,
+        presignedUrlExpiresAt: expiresAt,
       });
     }
 
@@ -251,13 +340,56 @@ export const useMultiVideoPlayback = (
   }, [maxVideoElements, videos]);
 
   /**
-   * Ensure a video element exists for the given video, creating it if needed
+   * Create a video element synchronously (for evicted videos)
+   * Uses /stream endpoint which handles R2 redirects
    */
+  const createVideoElementSync = useCallback((
+    videoData: Video,
+    callbacks: { onBuffering?: () => void; onBuffered?: () => void }
+  ): HTMLVideoElement => {
+    const video = document.createElement('video');
+    video.preload = 'auto';
+    video.playsInline = true;
+    video.muted = false;
+
+    // Use /stream endpoint (handles both local and R2 with redirect)
+    const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+    video.src = `${API_BASE_URL}/api/videos/${videoData.id}/stream`;
+
+    video.addEventListener('waiting', () => {
+      setIsBuffering(true);
+      callbacks.onBuffering?.();
+    });
+
+    video.addEventListener('canplay', () => {
+      setIsBuffering(false);
+      callbacks.onBuffered?.();
+    });
+
+    video.addEventListener('canplaythrough', () => {
+      setIsBuffering(false);
+      callbacks.onBuffered?.();
+    });
+
+    // Handle errors by attempting to refresh presigned URL for R2 videos
+    video.addEventListener('error', async () => {
+      const error = video.error;
+      if (error && error.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED && videoData.r2_key) {
+        const videoEl = videoElementsRef.current.get(videoData.id);
+        if (videoEl) {
+          await refreshPresignedUrl(videoEl);
+        }
+      }
+    });
+
+    return video;
+  }, [refreshPresignedUrl]);
+
   const ensureVideoElement = useCallback((videoData: Video): VideoElement | null => {
     let entry = videoElementsRef.current.get(videoData.id);
     if (!entry) {
-      // Video was evicted or never created - recreate it
-      const video = createVideoElement(videoData, { onBuffering, onBuffered });
+      // Video was evicted or never created - recreate it synchronously
+      const video = createVideoElementSync(videoData, { onBuffering, onBuffered });
       entry = {
         video,
         videoData,
@@ -268,7 +400,7 @@ export const useMultiVideoPlayback = (
       video.load();
     }
     return entry;
-  }, [createVideoElement, onBuffering, onBuffered]);
+  }, [createVideoElementSync, onBuffering, onBuffered]);
 
   /**
    * Pre-buffer the next video in sequence
