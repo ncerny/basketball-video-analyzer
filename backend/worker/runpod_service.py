@@ -102,22 +102,26 @@ class RunPodService:
                 name = pod.get("name", "")
                 # Our pods are named "bva-worker-{timestamp}"
                 if name.startswith("bva-worker-"):
-                    # Check actual runtime status, not just desiredStatus
-                    # Runtime contains actual state info when pod is live
+                    # Determine actual pod status from runtime and desiredStatus
                     runtime = pod.get("runtime")
+                    desired = pod.get("desiredStatus", "UNKNOWN")
+
                     if runtime:
-                        # Pod has runtime info - check actual uptime
+                        # Pod has runtime info - it's alive
                         uptime = runtime.get("uptimeInSeconds", 0)
                         actual_status = "RUNNING" if uptime > 0 else "STARTING"
+                    elif desired == "RUNNING":
+                        # Desired RUNNING but no runtime yet = starting up or crashed
+                        # Check if pod was recently created (within last 5 min)
+                        # For now, treat as STARTING to prevent duplicate pod creation
+                        actual_status = "STARTING"
+                    elif desired == "EXITED":
+                        actual_status = "EXITED"
                     else:
-                        # No runtime = not actually running (crashed, exited, etc.)
-                        actual_status = pod.get("desiredStatus", "UNKNOWN")
-                        if actual_status == "RUNNING":
-                            # Desired is RUNNING but no runtime = crashed/not started
-                            actual_status = "NOT_RUNNING"
+                        actual_status = desired
 
                     logger.debug(
-                        f"Pod {pod['id']}: desired={pod.get('desiredStatus')}, "
+                        f"Pod {pod['id']}: desired={desired}, "
                         f"runtime={runtime is not None}, actual={actual_status}"
                     )
 
@@ -134,13 +138,14 @@ class RunPodService:
         return pods
 
     def is_pod_running(self) -> bool:
-        """Check if any of our pods are running.
+        """Check if any of our pods are running or starting.
 
         Returns:
-            True if at least one pod is running.
+            True if at least one pod is running or being started.
         """
         pods = self.get_our_pods()
-        return any(p.status == "RUNNING" for p in pods)
+        # Include STARTING to prevent race condition where multiple pods get created
+        return any(p.status in ("RUNNING", "STARTING") for p in pods)
 
     def get_running_pod(self) -> PodStatus | None:
         """Get a running pod if one exists.
