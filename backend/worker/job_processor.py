@@ -202,7 +202,7 @@ class JobProcessor:
             raise FileNotFoundError(f"Video file not found: {video_path}")
 
         # Import SAM3 pipeline (heavy imports)
-        from app.services.sam3_detection_pipeline import SAM3DetectionPipeline
+        from app.ml.sam3_detection_pipeline import SAM3DetectionPipeline
 
         # Create progress callback
         async def update_progress(current: int, total: int, message: str = "") -> None:

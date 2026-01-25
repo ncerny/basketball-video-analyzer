@@ -310,6 +310,46 @@ class CloudStorage:
             logger.error(f"Failed to get status for {job_id}: {e}")
             return None
 
+    def find_jobs_for_video(self, video_id: int) -> list[JobManifest]:
+        """Find all jobs for a given video ID.
+
+        Args:
+            video_id: Database video ID.
+
+        Returns:
+            List of job manifests for this video, sorted by created_at desc.
+        """
+        jobs = []
+        response = self._client.list_objects_v2(Bucket=self._bucket, Prefix="jobs/")
+        for obj in response.get("Contents", []):
+            key = obj["Key"]
+            if not key.endswith(".json"):
+                continue
+            try:
+                manifest_response = self._client.get_object(Bucket=self._bucket, Key=key)
+                data = json.loads(manifest_response["Body"].read().decode("utf-8"))
+                manifest = JobManifest.from_dict(data)
+                if manifest.video_id == video_id:
+                    jobs.append(manifest)
+            except Exception as e:
+                logger.warning(f"Failed to read job manifest {key}: {e}")
+        return sorted(jobs, key=lambda j: j.created_at, reverse=True)
+
+    def video_exists(self, key: str) -> bool:
+        """Check if a video exists in R2.
+
+        Args:
+            key: R2 key for the video.
+
+        Returns:
+            True if video exists, False otherwise.
+        """
+        try:
+            self._client.head_object(Bucket=self._bucket, Key=key)
+            return True
+        except self._client.exceptions.ClientError:
+            return False
+
     def delete_job_files(self, job_id: str) -> None:
         """Delete all files for a job (cleanup after import)."""
         prefixes = [f"videos/{job_id}", f"jobs/{job_id}", f"results/{job_id}", f"status/{job_id}"]
@@ -321,3 +361,119 @@ class CloudStorage:
                 logger.debug(f"Deleted: {obj['Key']}")
                 deleted_count += 1
         logger.info(f"Cleanup complete for job {job_id}: deleted {deleted_count} files")
+
+    def _get_gpu_cache_key(self) -> str | None:
+        """Get cache key based on GPU model for torch compile cache.
+
+        Returns:
+            Cache key like 'cache/torch-compile-rtx-pro-6000.tar.gz' or None if no CUDA GPU.
+        """
+        try:
+            import torch
+            if not torch.cuda.is_available():
+                return None
+            gpu_name = torch.cuda.get_device_name(0)
+            # Sanitize GPU name for use in filename
+            safe_name = gpu_name.lower().replace(" ", "-").replace("/", "-")
+            # Remove common prefixes
+            for prefix in ["nvidia-", "geforce-"]:
+                if safe_name.startswith(prefix):
+                    safe_name = safe_name[len(prefix):]
+            return f"cache/torch-compile-{safe_name}.tar.gz"
+        except Exception:
+            return None
+
+    def download_torch_cache(self, cache_dir: Path | None = None) -> bool:
+        """Download torch compile cache from R2 if it exists.
+
+        Args:
+            cache_dir: Local cache directory. Defaults to ~/.cache/torch.
+
+        Returns:
+            True if cache was downloaded, False if not found or error.
+        """
+        import os
+        import tarfile
+        import tempfile
+
+        cache_key = self._get_gpu_cache_key()
+        if not cache_key:
+            logger.debug("No CUDA GPU detected, skipping torch cache download")
+            return False
+
+        cache_dir = cache_dir or Path(os.environ.get("TORCH_HOME", Path.home() / ".cache" / "torch"))
+
+        try:
+            # Check if cache exists in R2
+            try:
+                self._client.head_object(Bucket=self._bucket, Key=cache_key)
+            except self._client.exceptions.ClientError:
+                logger.debug("No torch compile cache found in R2")
+                return False
+
+            # Download to temp file and extract
+            with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp:
+                tmp_path = tmp.name
+
+            logger.info(f"Downloading torch compile cache from R2: {cache_key}")
+            self._client.download_file(self._bucket, cache_key, tmp_path)
+
+            # Extract to cache directory
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            with tarfile.open(tmp_path, "r:gz") as tar:
+                tar.extractall(cache_dir)
+
+            Path(tmp_path).unlink()
+            logger.info(f"Restored torch compile cache to {cache_dir}")
+            return True
+
+        except Exception as e:
+            logger.warning(f"Failed to download torch cache: {e}")
+            return False
+
+    def upload_torch_cache(self, cache_dir: Path | None = None) -> bool:
+        """Upload torch compile cache to R2.
+
+        Args:
+            cache_dir: Local cache directory. Defaults to ~/.cache/torch.
+
+        Returns:
+            True if cache was uploaded, False if error or nothing to upload.
+        """
+        import os
+        import tarfile
+        import tempfile
+
+        cache_key = self._get_gpu_cache_key()
+        if not cache_key:
+            logger.debug("No CUDA GPU detected, skipping torch cache upload")
+            return False
+
+        cache_dir = cache_dir or Path(os.environ.get("TORCH_HOME", Path.home() / ".cache" / "torch"))
+
+        # Check for inductor cache (where compiled kernels are stored)
+        inductor_cache = cache_dir / "inductor"
+        if not inductor_cache.exists():
+            logger.debug("No torch inductor cache to upload")
+            return False
+
+        try:
+            # Create tarball of cache
+            with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp:
+                tmp_path = tmp.name
+
+            with tarfile.open(tmp_path, "w:gz") as tar:
+                tar.add(inductor_cache, arcname="inductor")
+
+            # Upload to R2
+            file_size = Path(tmp_path).stat().st_size / 1024 / 1024
+            logger.info(f"Uploading torch compile cache ({file_size:.1f} MB) to R2: {cache_key}")
+            self._client.upload_file(tmp_path, self._bucket, cache_key)
+
+            Path(tmp_path).unlink()
+            logger.info("Torch compile cache uploaded to R2")
+            return True
+
+        except Exception as e:
+            logger.warning(f"Failed to upload torch cache: {e}")
+            return False

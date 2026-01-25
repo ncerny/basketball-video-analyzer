@@ -84,6 +84,7 @@ class Settings(BaseSettings):
     sam3_temp_frames_dir: Path = Path("/tmp/sam3_frames")
     sam3_sample_interval: int = 1  # Must be 1 for stable tracking IDs
     sam3_memory_window_size: int = 150  # Rolling window to bound memory (0 = keep all)
+    sam3_use_torch_compile: bool = False  # torch.compile() for 10-30% speedup (adds startup latency)
 
     # Worker settings
     # When True, detection jobs are queued in the database for an external worker process
@@ -110,9 +111,10 @@ class Settings(BaseSettings):
     # RunPod settings
     runpod_api_key: str = ""
     runpod_template_id: str = ""  # Template with our Docker image
-    runpod_gpu_preferences: str = "NVIDIA RTX 4090,NVIDIA RTX A5000,NVIDIA RTX 3090"  # Comma-separated, in order of preference
+    runpod_gpu_preferences: str = "NVIDIA RTX PRO 6000 Blackwell Server Edition,NVIDIA RTX 4090,NVIDIA RTX A5000"  # Comma-separated, in order of preference
     runpod_container_disk_gb: int = 50
     runpod_volume_disk_gb: int = 0  # 0 = no persistent volume
+    runpod_idle_check_interval: int = 60  # Check for idle pods every 60 seconds
 
     @property
     def models_dir(self) -> Path:

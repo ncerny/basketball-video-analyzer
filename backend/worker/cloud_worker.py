@@ -30,6 +30,7 @@ class CloudWorker:
         self._config = config
         self._worker_id = config.worker_id or f"{socket.gethostname()}-{uuid.uuid4().hex[:8]}"
         self._last_job_time: float = time.time()  # Track when we last processed a job
+        self._cache_uploaded: bool = False  # Track if we've uploaded torch cache this session
 
     async def run(self, shutdown_event: asyncio.Event, single_job: bool = False) -> None:
         """Main processing loop.
@@ -39,6 +40,12 @@ class CloudWorker:
             single_job: If True, exit after processing one job.
         """
         logger.info(f"Cloud worker {self._worker_id} starting...")
+
+        # Restore torch compile cache from R2 (speeds up first job if cache exists)
+        try:
+            await asyncio.to_thread(self._storage.download_torch_cache)
+        except Exception as e:
+            logger.warning(f"Failed to restore torch cache: {e}")
 
         # Reset any orphaned jobs from previous crashed workers
         try:
@@ -71,24 +78,8 @@ class CloudWorker:
                     logger.info("No pending jobs found, exiting")
                     break
 
-                # Check for idle shutdown (cloud GPU cost savings)
+                # Log idle time (API handles idle shutdown to avoid needing RUNPOD_API_KEY here)
                 idle_seconds = time.time() - self._last_job_time
-                idle_threshold = self._config.idle_shutdown_seconds
-                if idle_threshold > 0 and idle_seconds >= idle_threshold:
-                    logger.info(
-                        f"Worker idle for {idle_seconds:.0f}s (threshold: {idle_threshold:.0f}s), "
-                        "initiating shutdown..."
-                    )
-                    # Stop the RunPod pod to save costs
-                    runpod = get_runpod_service()
-                    if runpod._api_key:
-                        logger.info("Stopping RunPod pod due to idle timeout...")
-                        if runpod.stop_pod():
-                            logger.info("RunPod pod stop requested")
-                        else:
-                            logger.warning("Failed to stop RunPod pod")
-                    break  # Exit the worker loop
-
                 logger.debug(f"No pending jobs (idle {idle_seconds:.0f}s), waiting...")
                 try:
                     await asyncio.wait_for(
@@ -165,6 +156,15 @@ class CloudWorker:
 
         logger.info(f"Job {job.job_id} completed: {len(detections)} detections")
 
+        # Upload torch compile cache after first job (for future pods)
+        if not self._cache_uploaded:
+            try:
+                uploaded = await asyncio.to_thread(self._storage.upload_torch_cache)
+                if uploaded:
+                    self._cache_uploaded = True
+            except Exception as e:
+                logger.warning(f"Failed to upload torch cache: {e}")
+
     async def _run_detection(self, job: JobManifest, video_path: Path) -> list[dict]:
         """Run SAM3 detection on video.
 
@@ -176,7 +176,7 @@ class CloudWorker:
             List of detection dicts.
         """
         from app.ml.sam3_frame_extractor import SAM3FrameExtractor
-        from app.services.sam3_detection_pipeline import SAM3DetectionPipeline
+        from app.ml.sam3_detection_pipeline import SAM3DetectionPipeline
 
         params = job.parameters
         sample_interval = params.get("sample_interval", 1)

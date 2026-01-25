@@ -13,7 +13,7 @@ class TestSAM3DetectionPipeline:
 
     def test_init_creates_pipeline(self) -> None:
         """Test that initialization creates pipeline instance."""
-        from app.services.sam3_detection_pipeline import SAM3DetectionPipeline
+        from app.ml.sam3_detection_pipeline import SAM3DetectionPipeline
 
         pipeline = SAM3DetectionPipeline()
         assert pipeline is not None
@@ -21,7 +21,7 @@ class TestSAM3DetectionPipeline:
     @pytest.mark.asyncio
     async def test_process_video_yields_detections(self) -> None:
         """Test that process_video yields FrameDetections."""
-        from app.services.sam3_detection_pipeline import SAM3DetectionPipeline
+        from app.ml.sam3_detection_pipeline import SAM3DetectionPipeline
 
         pipeline = SAM3DetectionPipeline()
 

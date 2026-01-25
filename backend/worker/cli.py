@@ -52,7 +52,8 @@ def cli():
 @click.option("--video-path", required=True, type=click.Path(exists=True), help="Path to video file")
 @click.option("--sample-interval", default=1, type=int, help="Process every Nth frame")
 @click.option("--confidence", default=0.25, type=float, help="Confidence threshold")
-def submit(video_id: int, video_path: str, sample_interval: int, confidence: float):
+@click.option("--force", is_flag=True, help="Force new upload even if existing job found")
+def submit(video_id: int, video_path: str, sample_interval: int, confidence: float, force: bool):
     """Submit a video for cloud GPU processing."""
     import asyncio
     from sqlalchemy import select
@@ -76,29 +77,67 @@ def submit(video_id: int, video_path: str, sample_interval: int, confidence: flo
     storage = get_storage()
     video_path = Path(video_path)
 
-    # Generate job ID
-    job_id = str(uuid.uuid4())
-    click.echo(f"Creating job {job_id}...")
+    # Check for existing jobs that can be reused
+    if not force:
+        existing_jobs = storage.find_jobs_for_video(video_id)
+        for existing in existing_jobs:
+            # Only reuse failed or pending jobs with valid video
+            if existing.status not in ("failed", "pending"):
+                continue
 
-    # Upload video
-    click.echo(f"Uploading video ({video_path.stat().st_size / 1024 / 1024:.1f} MB)...")
-    video_key = storage.upload_video(job_id, video_path)
+            video_key = existing.parameters.get("video_key")
+            if not video_key:
+                continue
 
-    # Create and upload manifest
-    manifest = JobManifest(
-        job_id=job_id,
-        video_id=video_id,
-        status="pending",
-        created_at=datetime.now(timezone.utc).isoformat(),
-        parameters={
-            "sample_interval": sample_interval,
-            "confidence_threshold": confidence,
-            "video_key": video_key,
-        },
-    )
-    storage.upload_job_manifest(manifest)
+            if storage.video_exists(video_key):
+                click.echo(f"Found existing job {existing.job_id} with video already uploaded")
+                click.echo(f"Resetting job to pending (use --force to create new job)...")
 
-    click.echo(f"Job submitted: {job_id}")
+                # Reset the job
+                existing.status = "pending"
+                existing.error = None
+                existing.started_at = None
+                existing.completed_at = None
+                existing.frames_processed = 0
+                existing.worker_id = None
+                existing.last_heartbeat = None
+                existing.parameters["sample_interval"] = sample_interval
+                existing.parameters["confidence_threshold"] = confidence
+                storage.upload_job_manifest(existing)
+
+                click.echo(f"Job reset: {existing.job_id}")
+                job_id = existing.job_id
+                break
+        else:
+            # No reusable job found, create new one
+            job_id = None
+    else:
+        job_id = None
+
+    # Create new job if needed
+    if job_id is None:
+        job_id = str(uuid.uuid4())
+        click.echo(f"Creating job {job_id}...")
+
+        # Upload video
+        click.echo(f"Uploading video ({video_path.stat().st_size / 1024 / 1024:.1f} MB)...")
+        video_key = storage.upload_video(job_id, video_path)
+
+        # Create and upload manifest
+        manifest = JobManifest(
+            job_id=job_id,
+            video_id=video_id,
+            status="pending",
+            created_at=datetime.now(timezone.utc).isoformat(),
+            parameters={
+                "sample_interval": sample_interval,
+                "confidence_threshold": confidence,
+                "video_key": video_key,
+            },
+        )
+        storage.upload_job_manifest(manifest)
+
+        click.echo(f"Job submitted: {job_id}")
 
     # Auto-start RunPod if configured
     from worker.runpod_service import get_runpod_service
@@ -161,48 +200,14 @@ def status():
         click.echo(f"{job.job_id:<38} {job.video_id:<6} {job.status:<12} {progress:<20}")
 
 
-def validate_detection(det: dict, index: int) -> dict | None:
-    """Validate detection dict has required fields with correct types.
-
-    Returns validated detection dict or None if invalid.
-    Logs warning for invalid detections.
-    """
-    required_fields = ["frame", "track_id", "bbox", "confidence"]
-    for field in required_fields:
-        if field not in det:
-            click.echo(f"Warning: Detection {index} missing required field '{field}', skipping", err=True)
-            return None
-
-    bbox = det.get("bbox")
-    if not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
-        click.echo(f"Warning: Detection {index} has invalid bbox format, skipping", err=True)
-        return None
-
-    try:
-        return {
-            "frame": int(det["frame"]),
-            "track_id": int(det["track_id"]) if det["track_id"] is not None else None,
-            "bbox_x": float(bbox[0]),
-            "bbox_y": float(bbox[1]),
-            "bbox_width": float(bbox[2]),
-            "bbox_height": float(bbox[3]),
-            "confidence": float(det["confidence"]),
-        }
-    except (ValueError, TypeError) as e:
-        click.echo(f"Warning: Detection {index} has invalid data types ({e}), skipping", err=True)
-        return None
-
-
 @cli.command("import-job")
 @click.option("--job-id", required=True, help="Job ID to import")
 @click.option("--cleanup/--no-cleanup", default=True, help="Delete R2 files after import")
 def import_job(job_id: str, cleanup: bool):
     """Import completed job results into local database."""
     import asyncio
-    from sqlalchemy import select
     from app.database import async_session_maker
-    from app.models.detection import PlayerDetection
-    from app.models.video import Video
+    from worker.job_importer import import_job_results
 
     storage = get_storage()
 
@@ -214,69 +219,19 @@ def import_job(job_id: str, cleanup: bool):
     if manifest.status != "completed":
         raise click.ClickException(f"Job {job_id} is not completed (status: {manifest.status})")
 
-    # Download results
-    click.echo(f"Downloading results for job {job_id}...")
-    results = storage.download_results(job_id)
-    if not results:
-        raise click.ClickException(f"No results found for job {job_id}")
-
-    detections = results.get("detections", [])
-    click.echo(f"Found {len(detections)} detections")
-
-    # Validate all detections before importing
-    validated_detections = []
-    for i, det in enumerate(detections):
-        validated = validate_detection(det, i)
-        if validated:
-            validated_detections.append(validated)
-
-    if len(validated_detections) < len(detections):
-        click.echo(f"Validated {len(validated_detections)}/{len(detections)} detections")
-
-    # Import into database
     async def do_import():
         async with async_session_maker() as session:
-            # Verify video exists
-            video_result = await session.execute(
-                select(Video).where(Video.id == manifest.video_id)
-            )
-            video = video_result.scalar_one_or_none()
-            if not video:
-                raise click.ClickException(f"Video {manifest.video_id} not found in database")
-
-            # Insert detections
-            for det in validated_detections:
-                detection = PlayerDetection(
-                    video_id=manifest.video_id,
-                    frame_number=det["frame"],
-                    tracking_id=det["track_id"],
-                    bbox_x=det["bbox_x"],
-                    bbox_y=det["bbox_y"],
-                    bbox_width=det["bbox_width"],
-                    bbox_height=det["bbox_height"],
-                    confidence_score=det["confidence"],
-                )
-                session.add(detection)
-
-            await session.commit()
-            click.echo(f"Imported {len(validated_detections)} detections into database")
+            return await import_job_results(storage, manifest, session, cleanup=cleanup)
 
     try:
-        asyncio.run(do_import())
-    except click.ClickException:
-        raise
+        count = asyncio.run(do_import())
+        click.echo(f"Imported {count} detections into database")
+        if cleanup:
+            click.echo("Cleanup complete")
+    except ValueError as e:
+        raise click.ClickException(str(e))
     except Exception as e:
-        raise click.ClickException(f"Database error during import: {e}")
-
-    # Update manifest status
-    manifest.status = "imported"
-    storage.upload_job_manifest(manifest)
-
-    # Cleanup R2 files
-    if cleanup:
-        click.echo("Cleaning up R2 files...")
-        storage.delete_job_files(job_id)
-        click.echo("Cleanup complete")
+        raise click.ClickException(f"Import error: {e}")
 
 
 @cli.command("import-all")

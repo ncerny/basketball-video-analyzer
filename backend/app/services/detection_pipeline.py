@@ -823,7 +823,7 @@ async def create_detection_job_worker(job_manager):
             # Use SAM3 pipeline when sam3 backend is selected
             if settings.tracking_backend == "sam3":
                 from app.models.processing_batch import ProcessingBatch
-                from app.services.sam3_detection_pipeline import SAM3DetectionPipeline
+                from app.ml.sam3_detection_pipeline import SAM3DetectionPipeline
 
                 # Get video path
                 video_storage_path = Path(settings.video_storage_path)

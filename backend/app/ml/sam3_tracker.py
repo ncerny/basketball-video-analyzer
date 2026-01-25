@@ -50,6 +50,10 @@ class SAM3TrackerConfig:
     #   3. Running on a system with more memory
     memory_window_size: int = 0
 
+    # torch.compile() optimization - can provide 10-30% speedup on modern GPUs
+    # Disabled by default as it adds startup latency for compilation
+    use_torch_compile: bool = False
+
 
 class SAM3VideoTracker:
     """SAM3-based tracker using text-prompted video segmentation.
@@ -76,6 +80,7 @@ class SAM3VideoTracker:
             confidence_threshold=settings.sam3_confidence_threshold,
             use_half_precision=settings.sam3_use_half_precision,
             memory_window_size=settings.sam3_memory_window_size,
+            use_torch_compile=settings.sam3_use_torch_compile,
         )
 
         # Lazy-loaded components
@@ -190,6 +195,12 @@ class SAM3VideoTracker:
                 torch_dtype=dtype,
                 local_files_only=(model_path != "facebook/sam3"),
             ).to(self._device)
+
+            # Apply torch.compile() for potential 10-30% speedup
+            if self._config.use_torch_compile and self._device == "cuda":
+                logger.info("Applying torch.compile() optimization (this may take a moment)...")
+                self._model = torch.compile(self._model, mode="reduce-overhead")
+                logger.info("torch.compile() applied successfully")
 
             self._processor = Sam3VideoProcessor.from_pretrained(
                 model_path,
