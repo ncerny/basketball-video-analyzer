@@ -21,6 +21,10 @@ class WorkerConfig:
     # Graceful shutdown timeout
     shutdown_timeout_seconds: float = 30.0
 
+    # Idle shutdown (for cloud GPU cost savings)
+    # Stop pod after this many seconds of no jobs (0 = disabled)
+    idle_shutdown_seconds: float = 300.0  # 5 minutes default
+
     @classmethod
     def from_env(cls) -> "WorkerConfig":
         """Load config from environment variables."""
@@ -45,4 +49,5 @@ class WorkerConfig:
             worker_id=worker_id,
             database_url=database_url,
             shutdown_timeout_seconds=float(os.environ.get("WORKER_SHUTDOWN_TIMEOUT", "30.0")),
+            idle_shutdown_seconds=float(os.environ.get("WORKER_IDLE_SHUTDOWN", "300.0")),
         )

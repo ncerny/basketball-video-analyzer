@@ -99,7 +99,22 @@ def submit(video_id: int, video_path: str, sample_interval: int, confidence: flo
     storage.upload_job_manifest(manifest)
 
     click.echo(f"Job submitted: {job_id}")
-    click.echo(f"Start cloud worker to process, then run: python -m worker.cli import-job --job-id {job_id}")
+
+    # Auto-start RunPod if configured
+    from worker.runpod_service import get_runpod_service
+    runpod = get_runpod_service()
+    if runpod._api_key:
+        click.echo("Checking RunPod status...")
+        if runpod.is_pod_running():
+            click.echo("RunPod worker is already running - job will be processed shortly")
+        else:
+            click.echo("Starting RunPod worker...")
+            if runpod.start_pod():
+                click.echo("RunPod worker starting - job will be processed once pod is ready")
+            else:
+                click.echo("Failed to start RunPod - start manually or check RUNPOD_API_KEY")
+    else:
+        click.echo(f"Start cloud worker to process, then run: python -m worker.cli import-job --job-id {job_id}")
 
 
 @cli.command("status")
@@ -292,6 +307,67 @@ def import_all(cleanup: bool):
         # Use click's invoke to call import_job
         ctx = click.Context(import_job)
         ctx.invoke(import_job, job_id=manifest.job_id, cleanup=cleanup)
+
+
+@cli.command("gpu-status")
+def gpu_status():
+    """Show RunPod GPU worker status."""
+    from worker.runpod_service import get_runpod_service
+
+    runpod = get_runpod_service()
+    status = runpod.get_status_summary()
+
+    if not status.get("enabled"):
+        click.echo(f"RunPod: disabled ({status.get('reason', 'unknown')})")
+        click.echo("Set RUNPOD_API_KEY environment variable to enable auto-scaling")
+        return
+
+    if not status.get("pod_found"):
+        click.echo(f"RunPod: enabled but no pod found with name '{status.get('template_name')}'")
+        click.echo("Create a pod in RunPod console with this name first")
+        return
+
+    click.echo(f"RunPod Pod: {status['pod_name']}")
+    click.echo(f"  Status: {status['status']}")
+    click.echo(f"  GPU: {status.get('gpu_type', 'unknown')}")
+    click.echo(f"  Cost: ${status.get('cost_per_hour', 0):.2f}/hour")
+    click.echo(f"  Pod ID: {status['pod_id']}")
+
+
+@cli.command("gpu-start")
+def gpu_start():
+    """Start the RunPod GPU worker."""
+    from worker.runpod_service import get_runpod_service
+
+    runpod = get_runpod_service()
+    if not runpod._api_key:
+        raise click.ClickException("RUNPOD_API_KEY not set")
+
+    if runpod.is_pod_running():
+        click.echo("RunPod worker is already running")
+        return
+
+    click.echo("Starting RunPod worker...")
+    if runpod.start_pod():
+        click.echo("Start command sent. Pod will be ready in ~30-60 seconds.")
+    else:
+        raise click.ClickException("Failed to start pod. Check logs for details.")
+
+
+@cli.command("gpu-stop")
+def gpu_stop():
+    """Stop the RunPod GPU worker."""
+    from worker.runpod_service import get_runpod_service
+
+    runpod = get_runpod_service()
+    if not runpod._api_key:
+        raise click.ClickException("RUNPOD_API_KEY not set")
+
+    click.echo("Stopping RunPod worker...")
+    if runpod.stop_pod():
+        click.echo("Stop command sent. Pod will stop shortly.")
+    else:
+        raise click.ClickException("Failed to stop pod. Check logs for details.")
 
 
 if __name__ == "__main__":
