@@ -48,6 +48,10 @@ COPY --from=requirements /build/requirements.txt ./
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements.txt
 
+# Apply patches to fix bugs in dependencies (e.g., transformers SAM3 video)
+COPY patches/ ./patches/
+RUN bash patches/fix_sam3_video_text_embeds.sh
+
 # Copy application code LAST - changes most frequently
 COPY app/ ./app/
 COPY worker/ ./worker/
