@@ -43,8 +43,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY models/sam3 /models/sam3
 
 # Copy exported requirements and install with pip (faster than poetry)
-# Using BuildKit cache mount for pip cache across builds
+# Filter out torch/torchvision - base image already has CUDA-optimized versions
 COPY --from=requirements /build/requirements.txt ./
+RUN grep -v "^torch" requirements.txt > requirements-filtered.txt && \
+    mv requirements-filtered.txt requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements.txt
 
