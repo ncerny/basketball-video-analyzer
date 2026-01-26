@@ -61,5 +61,6 @@ COPY worker/ ./worker/
 # Environment
 ENV PYTHONPATH=/app
 ENV CLOUD_MODEL_PATH=/models/sam3
+ENV TOKENIZERS_PARALLELISM=false
 
 CMD ["python", "-m", "worker", "--cloud"]
