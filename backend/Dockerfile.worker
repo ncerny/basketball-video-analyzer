@@ -60,7 +60,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 # Apply patches to fix bugs in dependencies (e.g., transformers SAM3 video)
 COPY patches/ ./patches/
-RUN bash patches/fix_sam3_video_text_embeds.sh
+RUN bash patches/fix_sam3_video_text_embeds.sh && \
+    bash patches/fix_sam3_torch_compile.sh
 
 # Copy application code LAST - changes most frequently
 COPY app/ ./app/
