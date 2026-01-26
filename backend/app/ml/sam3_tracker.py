@@ -196,19 +196,13 @@ class SAM3VideoTracker:
                 local_files_only=(model_path != "facebook/sam3"),
             ).to(self._device)
 
-            # Apply torch.compile() for speedup
-            # SAM3 has dynamic tensor shapes and uses non-contiguous tensor views
-            # which cause weak reference errors in AOT autograd. We use:
-            # - backend="cudagraphs": Captures execution as CUDA graphs for replay
-            #   (bypasses AOT autograd's problematic tensor view handling)
+            # Apply torch.compile() for 10-30% speedup
+            # PyTorch 2.10+ has fixes for torch.compile with HuggingFace models
             if self._config.use_torch_compile and self._device == "cuda":
                 logger.info("Applying torch.compile() optimization (this may take a moment)...")
                 try:
-                    self._model = torch.compile(
-                        self._model,
-                        backend="cudagraphs",
-                    )
-                    logger.info("torch.compile() applied successfully (backend=cudagraphs)")
+                    self._model = torch.compile(self._model, dynamic=True)
+                    logger.info("torch.compile() applied successfully")
                 except Exception as e:
                     logger.warning(
                         f"torch.compile() failed at setup, running without compilation: {e}"
