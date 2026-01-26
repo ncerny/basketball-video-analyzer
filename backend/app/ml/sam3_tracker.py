@@ -197,9 +197,11 @@ class SAM3VideoTracker:
             ).to(self._device)
 
             # Apply torch.compile() for potential 10-30% speedup
+            # Note: "reduce-overhead" mode uses CUDA graphs which conflicts with SAM3's
+            # text encoder tensor reuse patterns. Use "default" mode instead.
             if self._config.use_torch_compile and self._device == "cuda":
                 logger.info("Applying torch.compile() optimization (this may take a moment)...")
-                self._model = torch.compile(self._model, mode="reduce-overhead")
+                self._model = torch.compile(self._model, mode="default")
                 logger.info("torch.compile() applied successfully")
 
             self._processor = Sam3VideoProcessor.from_pretrained(
@@ -279,16 +281,27 @@ class SAM3VideoTracker:
                 return
 
             # Initialize streaming video session (no video parameter = streaming mode)
-            # Use the dtype determined during model loading (float32 on MPS)
-            # inference_state_device="cpu" keeps memory bank/object pointers on CPU
-            # (on unified memory Macs this won't save RAM but may reduce MPS fragmentation)
-            inference_session = self._processor.init_video_session(
-                inference_device=self._device,
-                inference_state_device="cpu",
-                processing_device="cpu",
-                video_storage_device="cpu",
-                dtype=self._dtype,
-            )
+            # Device placement strategy:
+            # - CUDA: Keep everything on GPU for best performance with torch.compile
+            # - MPS: Use CPU for state/storage to reduce memory fragmentation on unified memory
+            if self._device == "cuda":
+                # CUDA: all on GPU for optimal torch.compile performance
+                inference_session = self._processor.init_video_session(
+                    inference_device=self._device,
+                    inference_state_device=self._device,
+                    processing_device=self._device,
+                    video_storage_device=self._device,
+                    dtype=self._dtype,
+                )
+            else:
+                # MPS/CPU: use CPU for state to reduce memory fragmentation
+                inference_session = self._processor.init_video_session(
+                    inference_device=self._device,
+                    inference_state_device="cpu",
+                    processing_device="cpu",
+                    video_storage_device="cpu",
+                    dtype=self._dtype,
+                )
 
             # Add text prompt for detection and tracking
             inference_session = self._processor.add_text_prompt(
