@@ -48,7 +48,7 @@ COPY --from=requirements /build/requirements.txt ./
 RUN grep -vE "^(torch|triton|nvidia-|numpy|pillow|sympy|networkx|fsspec|filelock|cffi|typing-extensions|pyyaml|markupsafe|jinja2|certifi|charset-normalizer|idna|urllib3|requests|packaging|pyparsing|mpmath|ipython|asttokens|prompt-toolkit|wcwidth|pygments|decorator|executing|stack-data|traitlets|matplotlib-inline|pexpect|ptyprocess|parso|jedi|pure-eval|psutil|click)" requirements.txt > requirements-filtered.txt && \
     mv requirements-filtered.txt requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -r requirements.txt
+    pip install --break-system-packages -r requirements.txt
 
 # Apply patches to fix bugs in dependencies (e.g., transformers SAM3 video)
 COPY patches/ ./patches/
