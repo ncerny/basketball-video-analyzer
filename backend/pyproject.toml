@@ -26,8 +26,6 @@ fastapi = "^0.109.0"
 uvicorn = {extras = ["standard"], version = "^0.27.0"}
 python-multipart = "^0.0.6"
 alembic = "^1.13.1"
-rfdetr = "^1.3.0"
-norfair = "^2.2.0"
 runpod = "^1.7.0"  # RunPod API for cloud GPU auto-scaling
 
 [tool.poetry.group.dev.dependencies]
@@ -46,14 +44,11 @@ ffmpeg-python = "^0.2.0"
 [tool.poetry.group.ml.dependencies]
 torch = ">=2.8.0"
 torchvision = ">=0.20.0"
-ultralytics = "^8.3.0"
-numpy = "<2.0.0"  # ultralytics compatibility
-supervision = "^0.23.0"  # Version compatible with numpy <2.0
+numpy = "<2.0.0"
 transformers = {git = "https://github.com/huggingface/transformers.git", branch = "main"}  # SAM3 requires main branch
 accelerate = ">=0.27.0"
 pillow = ">=10.0.0"
 num2words = ">=0.5.13"
-sam2 = "^1.0.0"  # Meta Segment Anything 2 for video tracking
 kernels = ">=0.1.0"  # SAM3 post-processing (NMS, hole filling, sprinkle removal)
 
 [build-system]
