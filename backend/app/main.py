@@ -170,13 +170,7 @@ async def monitor_cloud_jobs() -> None:
 @app.on_event("startup")
 async def startup_event() -> None:
     """Initialize services on application startup."""
-    from app.services.detection_pipeline import create_detection_job_worker
-    from app.services.job_manager import get_job_manager
     import asyncio
-
-    # Register detection worker in background (don't block startup)
-    job_manager = get_job_manager()
-    asyncio.create_task(create_detection_job_worker(job_manager))
 
     # Start cloud job monitoring (auto-import results, stop idle pods)
     asyncio.create_task(monitor_cloud_jobs())
