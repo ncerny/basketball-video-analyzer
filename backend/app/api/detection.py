@@ -26,17 +26,6 @@ from app.schemas.detection import (
 router = APIRouter(tags=["detection"])
 
 
-async def _ensure_detection_worker_registered() -> None:
-    """Ensure the detection worker is registered with the job manager (in-memory mode only)."""
-    from app.services.job_manager import get_job_manager
-
-    job_manager = get_job_manager()
-    if "video_detection" not in job_manager.registered_job_types:
-        from app.services.detection_pipeline import create_detection_job_worker
-
-        await create_detection_job_worker(job_manager)
-
-
 @router.post(
     "/videos/{video_id}/detect",
     response_model=DetectionJobResponse,
@@ -52,11 +41,10 @@ async def start_detection(
     Submits a background job to detect players in the video frames.
     Returns immediately with a job ID that can be used to poll status.
 
-    When USE_EXTERNAL_WORKER=true (default), jobs are queued in the database
-    for processing by an external worker process (`python -m worker`).
-
-    When USE_EXTERNAL_WORKER=false, jobs run in-process (may block the API).
+    Jobs are queued in the database for processing by an external worker process.
     """
+    from app.services.job_service import create_detection_job
+
     # Verify video exists
     stmt = select(VideoModel).where(VideoModel.id == video_id)
     result = await db.execute(stmt)
@@ -71,49 +59,24 @@ async def start_detection(
     # Get request parameters or defaults
     params = request if request is not None else DetectionJobRequest()
 
-    if settings.use_external_worker:
-        # DB-backed job queue for external worker
-        from app.services.job_service import create_detection_job
-
-        job = await create_detection_job(
-            db,
-            video_id=video_id,
-            parameters={
-                "sample_interval": params.sample_interval,
-                "batch_size": params.batch_size,
-                "confidence_threshold": params.confidence_threshold,
-                "max_seconds": params.max_seconds,
-                "enable_court_detection": params.enable_court_detection,
-                "enable_jersey_ocr": settings.enable_jersey_ocr,
-            },
-        )
-        await db.commit()
-        job_id = job.id
-        message = f"Detection job queued for worker. Poll GET /api/jobs/{job_id} for status."
-    else:
-        # In-memory job execution (legacy, runs in API process)
-        from app.services.job_manager import get_job_manager
-
-        await _ensure_detection_worker_registered()
-        job_manager = get_job_manager()
-        job_id = await job_manager.submit_job(
-            job_type="video_detection",
-            metadata={
-                "video_id": video_id,
-                "sample_interval": params.sample_interval,
-                "batch_size": params.batch_size,
-                "confidence_threshold": params.confidence_threshold,
-                "max_seconds": params.max_seconds,
-                "enable_court_detection": params.enable_court_detection,
-                "enable_jersey_ocr": settings.enable_jersey_ocr,
-            },
-        )
-        message = f"Detection job started in-process. Poll GET /api/jobs/{job_id} for status."
+    job = await create_detection_job(
+        db,
+        video_id=video_id,
+        parameters={
+            "sample_interval": params.sample_interval,
+            "batch_size": params.batch_size,
+            "confidence_threshold": params.confidence_threshold,
+            "max_seconds": params.max_seconds,
+            "enable_court_detection": params.enable_court_detection,
+            "enable_jersey_ocr": settings.enable_jersey_ocr,
+        },
+    )
+    await db.commit()
 
     return DetectionJobResponse(
-        job_id=job_id,
+        job_id=job.id,
         video_id=video_id,
-        message=message,
+        message=f"Detection job queued for worker. Poll GET /api/jobs/{job.id} for status.",
     )
 
 
@@ -127,58 +90,31 @@ async def get_job_status(
     Use this to poll for job completion after starting detection.
     When status is 'completed', the result field contains detection statistics.
     """
-    # Try DB-backed job first (always check DB since jobs persist there)
     from app.services.job_service import get_job
 
     db_job = await get_job(db, job_id)
-    if db_job:
-        return JobResponse(
-            id=db_job.id,
-            job_type=db_job.job_type.value,
-            status=db_job.status.value,
-            progress=JobProgress(
-                current=db_job.progress_current,
-                total=db_job.progress_total,
-                percentage=db_job.progress_percentage,
-                message=db_job.progress_message,
-            ),
-            result=db_job.result,
-            error=db_job.error_message,
-            created_at=db_job.created_at,
-            started_at=db_job.started_at,
-            completed_at=db_job.completed_at,
-            metadata=db_job.parameters,
+    if not db_job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job with id {job_id} not found",
         )
 
-    # Fall back to in-memory job manager (for legacy/in-process jobs)
-    if not settings.use_external_worker:
-        from app.services.job_manager import get_job_manager
-
-        job_manager = get_job_manager()
-        job = job_manager.get_job(job_id)
-
-        if job:
-            return JobResponse(
-                id=job.id,
-                job_type=job.job_type,
-                status=job.status.value,
-                progress=JobProgress(
-                    current=job.progress.current,
-                    total=job.progress.total,
-                    percentage=job.progress.percentage,
-                    message=job.progress.message,
-                ),
-                result=job.result,
-                error=job.error,
-                created_at=job.created_at,
-                started_at=job.started_at,
-                completed_at=job.completed_at,
-                metadata=job.metadata,
-            )
-
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail=f"Job with id {job_id} not found",
+    return JobResponse(
+        id=db_job.id,
+        job_type=db_job.job_type.value,
+        status=db_job.status.value,
+        progress=JobProgress(
+            current=db_job.progress_current,
+            total=db_job.progress_total,
+            percentage=db_job.progress_percentage,
+            message=db_job.progress_message,
+        ),
+        result=db_job.result,
+        error=db_job.error_message,
+        created_at=db_job.created_at,
+        started_at=db_job.started_at,
+        completed_at=db_job.completed_at,
+        metadata=db_job.parameters,
     )
 
 
@@ -195,55 +131,31 @@ async def cancel_job(
     from app.models.processing_job import JobStatus as DBJobStatus
     from app.services.job_service import cancel_job as cancel_db_job, get_job
 
-    # Try DB-backed job first
     db_job = await get_job(db, job_id)
-    if db_job:
-        if db_job.status in (DBJobStatus.COMPLETED, DBJobStatus.FAILED, DBJobStatus.CANCELLED):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Cannot cancel job with status: {db_job.status.value}",
-            )
-        if db_job.status == DBJobStatus.PROCESSING:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cannot cancel job that is already processing. Stop the worker to abort.",
-            )
+    if not db_job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job with id {job_id} not found",
+        )
 
-        cancelled = await cancel_db_job(db, job_id)
-        if cancelled:
-            await db.commit()
-            return
+    if db_job.status in (DBJobStatus.COMPLETED, DBJobStatus.FAILED, DBJobStatus.CANCELLED):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot cancel job with status: {db_job.status.value}",
+        )
+    if db_job.status == DBJobStatus.PROCESSING:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot cancel job that is already processing. Stop the worker to abort.",
+        )
+
+    cancelled = await cancel_db_job(db, job_id)
+    if not cancelled:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to cancel job",
         )
-
-    # Fall back to in-memory job manager
-    if not settings.use_external_worker:
-        from app.services.job_manager import JobStatus, get_job_manager
-
-        job_manager = get_job_manager()
-        job = job_manager.get_job(job_id)
-
-        if job:
-            if job.status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Cannot cancel job with status: {job.status.value}",
-                )
-
-            cancelled = await job_manager.cancel_job(job_id)
-            if cancelled:
-                return
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to cancel job",
-            )
-
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail=f"Job with id {job_id} not found",
-    )
+    await db.commit()
 
 
 @router.get("/videos/{video_id}/detections", response_model=VideoDetectionsResponse)
@@ -496,33 +408,35 @@ async def reprocess_tracks(
 @router.get("/ml-config")
 async def get_ml_config() -> dict:
     """Get ML configuration and device information for diagnostics."""
+    import torch
+
     from app.config import settings
-    from app.services.detection_pipeline import DetectionPipeline
 
-    resolved_device = DetectionPipeline._resolve_device(settings.ml_device)
-    batch_size = DetectionPipeline._get_optimal_batch_size(resolved_device)
+    # Resolve device using same logic as SAM3 tracker
+    if settings.ml_device == "auto":
+        if torch.cuda.is_available():
+            resolved_device = "cuda"
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            resolved_device = "mps"
+        else:
+            resolved_device = "cpu"
+    else:
+        resolved_device = settings.ml_device
 
-    # Check PyTorch availability
-    torch_info = {}
-    try:
-        import torch
-
-        torch_info = {
-            "version": torch.__version__,
-            "cuda_available": torch.cuda.is_available(),
-            "mps_available": (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()),
-        }
-    except ImportError:
-        torch_info = {"error": "PyTorch not installed"}
+    torch_info = {
+        "version": torch.__version__,
+        "cuda_available": torch.cuda.is_available(),
+        "mps_available": (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()),
+    }
 
     return {
         "ml_device_setting": settings.ml_device,
         "resolved_device": resolved_device,
-        "batch_size": batch_size,
-        "batch_size_cpu": settings.yolo_batch_size_cpu,
-        "batch_size_mps": settings.yolo_batch_size_mps,
-        "batch_size_cuda": settings.yolo_batch_size_cuda,
         "inference_timing_enabled": settings.enable_inference_timing,
-        "confidence_threshold": settings.yolo_confidence_threshold,
+        "sam3_prompt": settings.sam3_prompt,
+        "sam3_confidence_threshold": settings.sam3_confidence_threshold,
+        "sam3_use_half_precision": settings.sam3_use_half_precision,
+        "sam3_memory_window_size": settings.sam3_memory_window_size,
+        "sam3_use_torch_compile": settings.sam3_use_torch_compile,
         "torch": torch_info,
     }
