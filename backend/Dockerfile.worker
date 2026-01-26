@@ -45,13 +45,11 @@ COPY models/sam3 /models/sam3
 # Copy exported requirements and install with pip (faster than poetry)
 # Filter out torch/torchvision (base image has compatible prebuilt versions)
 # Filter out transformers (installed from git below)
-# Use constraints from base image to avoid reinstalling existing packages
 COPY --from=requirements /build/requirements.txt ./
-RUN pip freeze > /tmp/base-constraints.txt && \
-    grep -vE "^(transformers|torch[^a-z]|torchvision)" requirements.txt > requirements-filtered.txt && \
+RUN grep -vE "^(transformers|torch[^a-z]|torchvision)" requirements.txt > requirements-filtered.txt && \
     mv requirements-filtered.txt requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --break-system-packages --upgrade-strategy only-if-needed -c /tmp/base-constraints.txt -r requirements.txt
+    pip install --break-system-packages -r requirements.txt
 
 # Install transformers from git (SAM3 requires main branch, poetry git export format can fail)
 RUN --mount=type=cache,target=/root/.cache/pip \
