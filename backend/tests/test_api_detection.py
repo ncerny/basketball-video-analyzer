@@ -1,13 +1,12 @@
 """Tests for detection API endpoints."""
 
-from datetime import date
+from datetime import date, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.job_manager import Job, JobProgress, JobStatus, reset_job_manager
 
 client = TestClient(app)
 
@@ -39,14 +38,6 @@ def sample_video(sample_game):
     return response.json()
 
 
-@pytest.fixture(autouse=True)
-def reset_job_manager_fixture():
-    """Reset job manager before and after each test."""
-    reset_job_manager()
-    yield
-    reset_job_manager()
-
-
 class TestStartDetection:
     """Tests for POST /videos/{video_id}/detect endpoint."""
 
@@ -58,13 +49,13 @@ class TestStartDetection:
 
     def test_start_detection_success(self, sample_video):
         """Test successfully starting a detection job."""
-        with patch("app.api.detection._ensure_detection_worker_registered", new_callable=AsyncMock):
-            with patch("app.api.detection.get_job_manager") as mock_get_jm:
-                mock_jm = MagicMock()
-                mock_jm.submit_job = AsyncMock(return_value="test-job-id")
-                mock_get_jm.return_value = mock_jm
+        mock_job = MagicMock()
+        mock_job.id = "test-job-id"
 
-                response = client.post(f"/api/videos/{sample_video['id']}/detect")
+        with patch("app.api.detection.create_detection_job", new_callable=AsyncMock) as mock_create:
+            mock_create.return_value = mock_job
+
+            response = client.post(f"/api/videos/{sample_video['id']}/detect")
 
         assert response.status_code == 202
         data = response.json()
@@ -74,28 +65,29 @@ class TestStartDetection:
 
     def test_start_detection_with_custom_params(self, sample_video):
         """Test starting detection with custom parameters."""
-        with patch("app.api.detection._ensure_detection_worker_registered", new_callable=AsyncMock):
-            with patch("app.api.detection.get_job_manager") as mock_get_jm:
-                mock_jm = MagicMock()
-                mock_jm.submit_job = AsyncMock(return_value="test-job-id")
-                mock_get_jm.return_value = mock_jm
+        mock_job = MagicMock()
+        mock_job.id = "test-job-id"
 
-                response = client.post(
-                    f"/api/videos/{sample_video['id']}/detect",
-                    json={
-                        "sample_interval": 5,
-                        "batch_size": 16,
-                        "confidence_threshold": 0.7,
-                    },
-                )
+        with patch("app.api.detection.create_detection_job", new_callable=AsyncMock) as mock_create:
+            mock_create.return_value = mock_job
+
+            response = client.post(
+                f"/api/videos/{sample_video['id']}/detect",
+                json={
+                    "sample_interval": 5,
+                    "batch_size": 16,
+                    "confidence_threshold": 0.7,
+                },
+            )
 
         assert response.status_code == 202
 
-        # Verify the job was submitted with correct params
-        call_args = mock_jm.submit_job.call_args
-        assert call_args.kwargs["metadata"]["sample_interval"] == 5
-        assert call_args.kwargs["metadata"]["batch_size"] == 16
-        assert call_args.kwargs["metadata"]["confidence_threshold"] == 0.7
+        # Verify the job was created with correct params
+        call_args = mock_create.call_args
+        params = call_args.kwargs["parameters"]
+        assert params["sample_interval"] == 5
+        assert params["batch_size"] == 16
+        assert params["confidence_threshold"] == 0.7
 
 
 class TestGetJobStatus:
@@ -103,26 +95,34 @@ class TestGetJobStatus:
 
     def test_get_job_not_found(self):
         """Test getting status of non-existent job."""
-        response = client.get("/api/jobs/nonexistent-job-id")
+        with patch("app.api.detection.get_job", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = None
+            response = client.get("/api/jobs/nonexistent-job-id")
+
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
 
     def test_get_job_status_success(self):
         """Test getting job status successfully."""
-        # Create a mock job
-        job = Job(
-            id="test-job-123",
-            job_type="video_detection",
-            status=JobStatus.PROCESSING,
-            progress=JobProgress(current=50, total=100, message="Processing frames..."),
-            metadata={"video_id": 1},
-        )
+        from app.models.processing_job import JobStatus, JobType
 
-        with patch("app.api.detection.get_job_manager") as mock_get_jm:
-            mock_jm = MagicMock()
-            mock_jm.get_job.return_value = job
-            mock_get_jm.return_value = mock_jm
+        mock_job = MagicMock()
+        mock_job.id = "test-job-123"
+        mock_job.job_type = JobType.VIDEO_DETECTION
+        mock_job.status = JobStatus.PROCESSING
+        mock_job.progress_current = 50
+        mock_job.progress_total = 100
+        mock_job.progress_percentage = 50.0
+        mock_job.progress_message = "Processing frames..."
+        mock_job.result = None
+        mock_job.error_message = None
+        mock_job.created_at = datetime.now()
+        mock_job.started_at = datetime.now()
+        mock_job.completed_at = None
+        mock_job.parameters = {"video_id": 1}
 
+        with patch("app.api.detection.get_job", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_job
             response = client.get("/api/jobs/test-job-123")
 
         assert response.status_code == 200
@@ -140,22 +140,23 @@ class TestCancelJob:
 
     def test_cancel_job_not_found(self):
         """Test cancelling non-existent job."""
-        response = client.delete("/api/jobs/nonexistent-job-id")
+        with patch("app.api.detection.get_job", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = None
+            response = client.delete("/api/jobs/nonexistent-job-id")
+
         assert response.status_code == 404
 
     def test_cancel_completed_job(self):
         """Test cancelling an already completed job."""
-        job = Job(
-            id="completed-job",
-            job_type="video_detection",
-            status=JobStatus.COMPLETED,
-        )
+        from app.models.processing_job import JobStatus, JobType
 
-        with patch("app.api.detection.get_job_manager") as mock_get_jm:
-            mock_jm = MagicMock()
-            mock_jm.get_job.return_value = job
-            mock_get_jm.return_value = mock_jm
+        mock_job = MagicMock()
+        mock_job.id = "completed-job"
+        mock_job.job_type = JobType.VIDEO_DETECTION
+        mock_job.status = JobStatus.COMPLETED
 
+        with patch("app.api.detection.get_job", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_job
             response = client.delete("/api/jobs/completed-job")
 
         assert response.status_code == 400
@@ -163,19 +164,19 @@ class TestCancelJob:
 
     def test_cancel_job_success(self):
         """Test successfully cancelling a job."""
-        job = Job(
-            id="pending-job",
-            job_type="video_detection",
-            status=JobStatus.PENDING,
-        )
+        from app.models.processing_job import JobStatus, JobType
 
-        with patch("app.api.detection.get_job_manager") as mock_get_jm:
-            mock_jm = MagicMock()
-            mock_jm.get_job.return_value = job
-            mock_jm.cancel_job = AsyncMock(return_value=True)
-            mock_get_jm.return_value = mock_jm
+        mock_job = MagicMock()
+        mock_job.id = "pending-job"
+        mock_job.job_type = JobType.VIDEO_DETECTION
+        mock_job.status = JobStatus.PENDING
 
-            response = client.delete("/api/jobs/pending-job")
+        with patch("app.api.detection.get_job", new_callable=AsyncMock) as mock_get:
+            with patch("app.api.detection.cancel_db_job", new_callable=AsyncMock) as mock_cancel:
+                mock_get.return_value = mock_job
+                mock_cancel.return_value = True
+
+                response = client.delete("/api/jobs/pending-job")
 
         assert response.status_code == 204
 
