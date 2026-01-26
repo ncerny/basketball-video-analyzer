@@ -25,10 +25,10 @@ class TestSAM3Config:
         assert settings.sam3_use_half_precision is True
         assert isinstance(settings.sam3_temp_frames_dir, Path)
 
-    def test_tracking_backend_includes_sam3(self) -> None:
-        """Test that sam3 is a valid tracking backend option."""
+    def test_sam3_is_only_tracker(self) -> None:
+        """Test that tracking_backend setting is removed (SAM3 is the only tracker)."""
         from app.config import Settings
 
-        # Check the type annotation includes sam3
-        tracking_field = Settings.model_fields["tracking_backend"]
-        assert "sam3" in str(tracking_field.annotation)
+        # tracking_backend should not exist - SAM3 is now the only option
+        assert "tracking_backend" not in Settings.model_fields
+        assert "detection_backend" not in Settings.model_fields
