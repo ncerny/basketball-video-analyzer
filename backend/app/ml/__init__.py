@@ -1,11 +1,10 @@
 """ML module for basketball video analysis.
 
-Provides player detection using YOLOv8 models.
+Provides player detection and tracking using SAM3 (Segment Anything Model 3).
 """
 
 from .base import BaseDetector
 from .types import BoundingBox, Detection, DetectionClass, FrameDetections
-from .yolo_detector import YOLODetector
 
 __all__ = [
     "BaseDetector",
@@ -13,5 +12,4 @@ __all__ = [
     "Detection",
     "DetectionClass",
     "FrameDetections",
-    "YOLODetector",
 ]

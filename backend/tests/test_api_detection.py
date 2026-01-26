@@ -52,7 +52,7 @@ class TestStartDetection:
         mock_job = MagicMock()
         mock_job.id = "test-job-id"
 
-        with patch("app.api.detection.create_detection_job", new_callable=AsyncMock) as mock_create:
+        with patch("app.services.job_service.create_detection_job", new_callable=AsyncMock) as mock_create:
             mock_create.return_value = mock_job
 
             response = client.post(f"/api/videos/{sample_video['id']}/detect")
@@ -68,7 +68,7 @@ class TestStartDetection:
         mock_job = MagicMock()
         mock_job.id = "test-job-id"
 
-        with patch("app.api.detection.create_detection_job", new_callable=AsyncMock) as mock_create:
+        with patch("app.services.job_service.create_detection_job", new_callable=AsyncMock) as mock_create:
             mock_create.return_value = mock_job
 
             response = client.post(
@@ -95,7 +95,7 @@ class TestGetJobStatus:
 
     def test_get_job_not_found(self):
         """Test getting status of non-existent job."""
-        with patch("app.api.detection.get_job", new_callable=AsyncMock) as mock_get:
+        with patch("app.services.job_service.get_job", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = None
             response = client.get("/api/jobs/nonexistent-job-id")
 
@@ -121,7 +121,7 @@ class TestGetJobStatus:
         mock_job.completed_at = None
         mock_job.parameters = {"video_id": 1}
 
-        with patch("app.api.detection.get_job", new_callable=AsyncMock) as mock_get:
+        with patch("app.services.job_service.get_job", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_job
             response = client.get("/api/jobs/test-job-123")
 
@@ -140,7 +140,7 @@ class TestCancelJob:
 
     def test_cancel_job_not_found(self):
         """Test cancelling non-existent job."""
-        with patch("app.api.detection.get_job", new_callable=AsyncMock) as mock_get:
+        with patch("app.services.job_service.get_job", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = None
             response = client.delete("/api/jobs/nonexistent-job-id")
 
@@ -155,7 +155,7 @@ class TestCancelJob:
         mock_job.job_type = JobType.VIDEO_DETECTION
         mock_job.status = JobStatus.COMPLETED
 
-        with patch("app.api.detection.get_job", new_callable=AsyncMock) as mock_get:
+        with patch("app.services.job_service.get_job", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_job
             response = client.delete("/api/jobs/completed-job")
 
@@ -171,8 +171,8 @@ class TestCancelJob:
         mock_job.job_type = JobType.VIDEO_DETECTION
         mock_job.status = JobStatus.PENDING
 
-        with patch("app.api.detection.get_job", new_callable=AsyncMock) as mock_get:
-            with patch("app.api.detection.cancel_db_job", new_callable=AsyncMock) as mock_cancel:
+        with patch("app.services.job_service.get_job", new_callable=AsyncMock) as mock_get:
+            with patch("app.services.job_service.cancel_job", new_callable=AsyncMock) as mock_cancel:
                 mock_get.return_value = mock_job
                 mock_cancel.return_value = True
 
