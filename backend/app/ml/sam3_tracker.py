@@ -197,19 +197,20 @@ class SAM3VideoTracker:
             ).to(self._device)
 
             # Apply torch.compile() for potential 10-30% speedup
-            # Note: torch.compile can be unstable with SAM3 due to dynamic shapes and
-            # complex memory patterns. We enable suppress_errors to fall back gracefully.
+            # SAM3 has dynamic tensor shapes (varying number of objects, frame sizes)
+            # so we must use dynamic=True to avoid recompilation failures.
             if self._config.use_torch_compile and self._device == "cuda":
                 logger.info("Applying torch.compile() optimization (this may take a moment)...")
                 try:
-                    # Enable suppress_errors so dynamo falls back to eager on runtime errors
-                    torch._dynamo.config.suppress_errors = True
-                    self._model = torch.compile(self._model, mode="default")
-                    logger.info("torch.compile() applied successfully (suppress_errors=True)")
+                    self._model = torch.compile(
+                        self._model,
+                        mode="default",
+                        dynamic=True,  # Required for SAM3's dynamic shapes
+                    )
+                    logger.info("torch.compile() applied successfully (dynamic=True)")
                 except Exception as e:
                     logger.warning(
-                        f"torch.compile() failed, falling back to eager mode: {e}. "
-                        "Set SAM3_USE_TORCH_COMPILE=false to disable this warning."
+                        f"torch.compile() failed at setup, running without compilation: {e}"
                     )
 
             self._processor = Sam3VideoProcessor.from_pretrained(
