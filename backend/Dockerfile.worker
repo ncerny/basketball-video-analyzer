@@ -43,10 +43,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY models/sam3 /models/sam3
 
 # Copy exported requirements and install with pip (faster than poetry)
-# Filter out torch/torchvision (base image has compatible prebuilt versions)
-# Filter out transformers (installed from git below)
+# Filter out packages that come with the base image to avoid unnecessary reinstalls:
+# - torch/torchvision: base image has compatible prebuilt versions (ABI must match)
+# - numpy, certifi, setuptools, wheel: base image versions are fine
+# - transformers: installed from git below
 COPY --from=requirements /build/requirements.txt ./
-RUN grep -vE "^(transformers|torch[^a-z]|torchvision)" requirements.txt > requirements-filtered.txt && \
+RUN grep -vE "^(transformers|torch[^a-z]|torchvision|numpy|certifi|setuptools|wheel|cuda)" requirements.txt > requirements-filtered.txt && \
     mv requirements-filtered.txt requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --break-system-packages -r requirements.txt
