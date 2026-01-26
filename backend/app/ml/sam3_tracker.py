@@ -196,18 +196,21 @@ class SAM3VideoTracker:
                 local_files_only=(model_path != "facebook/sam3"),
             ).to(self._device)
 
-            # Apply torch.compile() for potential 10-30% speedup
-            # SAM3 has dynamic tensor shapes (varying number of objects, frame sizes)
-            # so we must use dynamic=True to avoid recompilation failures.
+            # Apply torch.compile() for speedup
+            # SAM3 has dynamic tensor shapes and uses non-contiguous tensor views
+            # which cause issues with the default inductor backend. We use:
+            # - backend="aot_eager": AOT autograd compilation without inductor
+            #   (avoids tensor view/storage bugs while still optimizing autograd)
+            # - dynamic=True: handle varying shapes without recompilation
             if self._config.use_torch_compile and self._device == "cuda":
                 logger.info("Applying torch.compile() optimization (this may take a moment)...")
                 try:
                     self._model = torch.compile(
                         self._model,
-                        mode="default",
-                        dynamic=True,  # Required for SAM3's dynamic shapes
+                        backend="aot_eager",  # AOT autograd, avoids inductor bugs
+                        dynamic=True,
                     )
-                    logger.info("torch.compile() applied successfully (dynamic=True)")
+                    logger.info("torch.compile() applied successfully (backend=aot_eager, dynamic=True)")
                 except Exception as e:
                     logger.warning(
                         f"torch.compile() failed at setup, running without compilation: {e}"
