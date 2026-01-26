@@ -24,16 +24,6 @@ class Settings(BaseSettings):
 
     ml_models_path: str = "./models"
     ml_device: Literal["cpu", "mps", "cuda", "auto"] = "auto"
-    detection_backend: Literal["yolo", "rfdetr"] = "rfdetr"
-    tracking_backend: Literal["bytetrack", "norfair", "sam2", "sam3"] = "norfair"
-    yolo_model_name: str = "yolov8s.pt"
-    yolo_confidence_threshold: float = 0.35
-    yolo_person_class_id: int = 0
-
-    # GPU-specific performance settings
-    yolo_batch_size_cpu: int = 8
-    yolo_batch_size_mps: int = 16
-    yolo_batch_size_cuda: int = 32
 
     # Enable performance logging
     enable_inference_timing: bool = False
@@ -59,23 +49,6 @@ class Settings(BaseSettings):
     identity_switch_window_size_frames: int = 150
     identity_switch_min_readings: int = 3
     identity_switch_threshold: float = 0.7
-
-    # SAM2 tracking settings
-    sam2_model_name: Literal[
-        "sam2_hiera_tiny",
-        "sam2_hiera_small",
-        "sam2_hiera_base_plus",
-        "sam2_hiera_large",
-    ] = "sam2_hiera_tiny"
-    sam2_new_object_iou_threshold: float = 0.3  # IOU below this = new object
-    sam2_lost_track_frames: int = 0  # 0 = keep tracks for entire video (no cleanup)
-    sam2_max_memory_frames: int = 30  # Limit memory bank size
-    sam2_auto_download: bool = True  # Auto-download missing checkpoints
-
-    # SAM2 embedding-based re-identification
-    sam2_embedding_similarity_threshold: float = 0.35  # Min cosine similarity for re-ID (lowered for better matching)
-    sam2_color_tiebreaker_threshold: float = 0.15  # Use color when embedding scores within this
-    sam2_reidentification_enabled: bool = True  # Enable embedding-based re-ID
 
     # SAM3 tracking settings
     sam3_prompt: str = "basketball player"
