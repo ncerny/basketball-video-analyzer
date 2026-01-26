@@ -196,13 +196,20 @@ class SAM3VideoTracker:
                 local_files_only=(model_path != "facebook/sam3"),
             ).to(self._device)
 
-            # Apply torch.compile() for 10-30% speedup
-            # PyTorch 2.10+ has fixes for torch.compile with HuggingFace models
+            # Apply torch.compile for GPU speedup
+            # Note: The default inductor backend has bugs with SAM3's permute operations,
+            # so we use cudagraphs backend which provides GPU optimization without inductor
             if self._config.use_torch_compile and self._device == "cuda":
                 logger.info("Applying torch.compile() optimization (this may take a moment)...")
                 try:
-                    self._model = torch.compile(self._model, dynamic=True)
-                    logger.info("torch.compile() applied successfully")
+                    # cudagraphs backend: Uses CUDA graphs for optimization
+                    # without triggering inductor's buggy AOT autograd tracing
+                    self._model = torch.compile(
+                        self._model,
+                        backend="cudagraphs",
+                        dynamic=False,  # cudagraphs requires static shapes
+                    )
+                    logger.info("torch.compile() with cudagraphs backend applied successfully")
                 except Exception as e:
                     logger.warning(
                         f"torch.compile() failed at setup, running without compilation: {e}"
