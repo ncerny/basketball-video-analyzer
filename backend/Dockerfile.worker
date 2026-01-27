@@ -79,10 +79,11 @@ ENV TOKENIZERS_PARALLELISM=false
 # SAM3 settings
 # Disable torch.compile (incompatible with SAM3's stateful video processing)
 ENV SAM3_USE_TORCH_COMPILE=0
-# Memory window bounds GPU memory for long videos (0 = keep all frames = OOM risk)
-ENV SAM3_MEMORY_WINDOW_SIZE=150
+# Keep all frames for stable tracking IDs (memory_window>0 causes ID drift)
+ENV SAM3_MEMORY_WINDOW_SIZE=0
 
 # CUDA memory optimization (reduces fragmentation on long videos)
+# This may allow full video processing without OOM by reducing reserved-but-unused memory
 ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 CMD ["python", "-m", "worker", "--cloud"]
