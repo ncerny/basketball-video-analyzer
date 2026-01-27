@@ -32,11 +32,10 @@ class CloudWorker:
         self._last_job_time: float = time.time()  # Track when we last processed a job
 
     async def _warmup_model(self) -> None:
-        """Warmup model by running inference before accepting jobs.
+        """Warmup model by loading it to GPU before accepting jobs.
 
         This ensures the first real job doesn't pay the model loading cost.
-        Note: We use cudagraphs backend which compiles to GPU memory, not disk.
-        Cache upload/download only works with inductor backend.
+        The actual cudagraphs compilation happens on first inference.
         """
         if not torch.cuda.is_available():
             logger.info("No CUDA available, skipping warmup")
@@ -45,8 +44,6 @@ class CloudWorker:
         logger.info("Warming up model (loading to GPU)...")
         try:
             from app.ml.sam3_tracker import SAM3VideoTracker, SAM3TrackerConfig
-            import numpy as np
-            from PIL import Image
 
             # Create tracker with torch.compile enabled
             config = SAM3TrackerConfig(
@@ -56,25 +53,11 @@ class CloudWorker:
             )
             tracker = SAM3VideoTracker(config)
 
-            # Run a dummy inference to load model and trigger cudagraphs compilation
-            logger.info("Running warmup inference...")
-            dummy_frame = Image.fromarray(
-                np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
-            )
+            # Load model to GPU (this is the expensive part)
+            tracker._load_predictor()
+            logger.info("Model loaded to GPU")
 
-            try:
-                tracker._load_predictor()  # Load model to GPU
-                inputs = tracker._processor(
-                    images=dummy_frame,
-                    return_tensors="pt"
-                ).to(tracker._device)
-                with torch.no_grad():
-                    _ = tracker._model.image_encoder(inputs["pixel_values"])
-                logger.info("Warmup inference complete")
-            except Exception as e:
-                logger.warning(f"Warmup inference failed: {e}")
-
-            # Clean up
+            # Clean up - model will be reloaded for actual jobs
             del tracker
             gc.collect()
             torch.cuda.empty_cache()
