@@ -31,43 +31,6 @@ class CloudWorker:
         self._worker_id = config.worker_id or f"{socket.gethostname()}-{uuid.uuid4().hex[:8]}"
         self._last_job_time: float = time.time()  # Track when we last processed a job
 
-    async def _warmup_model(self) -> None:
-        """Warmup model by loading it to GPU before accepting jobs.
-
-        This ensures the first real job doesn't pay the model loading cost.
-        The actual cudagraphs compilation happens on first inference.
-        """
-        if not torch.cuda.is_available():
-            logger.info("No CUDA available, skipping warmup")
-            return
-
-        logger.info("Warming up model (loading to GPU)...")
-        try:
-            from app.ml.sam3_tracker import SAM3VideoTracker, SAM3TrackerConfig
-
-            # Create tracker with torch.compile enabled
-            config = SAM3TrackerConfig(
-                prompt="basketball player",
-                use_torch_compile=True,
-                use_half_precision=True,
-            )
-            tracker = SAM3VideoTracker(config)
-
-            # Load model to GPU (this is the expensive part)
-            tracker._load_predictor()
-            logger.info("Model loaded to GPU")
-
-            # Clean up - model will be reloaded for actual jobs
-            del tracker
-            gc.collect()
-            torch.cuda.empty_cache()
-
-            logger.info("Model warmup complete")
-
-        except Exception as e:
-            logger.error(f"Model warmup failed: {e}")
-            # Continue anyway - first job will just be slower
-
     async def run(self, shutdown_event: asyncio.Event, single_job: bool = False) -> None:
         """Main processing loop.
 
@@ -76,9 +39,6 @@ class CloudWorker:
             single_job: If True, exit after processing one job.
         """
         logger.info(f"Cloud worker {self._worker_id} starting...")
-
-        # Warmup: Load model to GPU BEFORE accepting jobs
-        await self._warmup_model()
 
         # Reset any orphaned jobs from previous crashed workers
         try:
