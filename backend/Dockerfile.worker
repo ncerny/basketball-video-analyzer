@@ -43,12 +43,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY models/sam3 /models/sam3
 
 # Copy exported requirements and install with pip (faster than poetry)
-# - Filter torch/torchvision/nvidia-*/triton (base image has ABI-compatible prebuilt versions)
-# - Filter transformers (installed from git below)
-# - Convert == to >= so pip uses existing packages if they satisfy requirements
-#   (e.g., base has certifi 2026.1.4, requirements say >=2025.11.12, no reinstall needed)
+# Filter packages that come with PyTorch base image to avoid slow reinstalls:
+# - torch/torchvision/triton/nvidia-*/cuda-* (CUDA libraries - MUST match base image)
+# - PyTorch deps: filelock, fsspec, jinja2, markupsafe, mpmath, networkx, numpy,
+#   packaging, pillow, setuptools, sympy, typing-extensions (already installed)
+# - transformers (installed from git below)
+# Convert == to >= so pip uses existing packages if they satisfy requirements
 COPY --from=requirements /build/requirements.txt ./
-RUN grep -vE "^(transformers|torch[^a-z]|torchvision|nvidia-|triton)" requirements.txt | \
+RUN grep -vE "^(transformers|torch[^a-z]|torchvision|triton|nvidia-|cuda-|filelock|fsspec|jinja2|markupsafe|mpmath|networkx|numpy|packaging|pillow|setuptools|sympy|typing-extensions)" requirements.txt | \
     sed 's/==/>=/' > requirements-filtered.txt && \
     mv requirements-filtered.txt requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
