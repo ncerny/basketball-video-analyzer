@@ -57,8 +57,9 @@ class CloudWorker:
                 from app.ml.sam3_tracker import SAM3VideoTracker, SAM3TrackerConfig
 
                 # Create tracker with torch.compile enabled
+                # Use same prompt as production to ensure identical code paths
                 config = SAM3TrackerConfig(
-                    prompt="person",
+                    prompt="basketball player",
                     use_torch_compile=True,
                     use_half_precision=True,
                 )
