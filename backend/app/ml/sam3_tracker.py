@@ -137,6 +137,9 @@ class SAM3VideoTracker:
 
         Returns:
             Device string: 'cuda', 'mps', or 'cpu'.
+
+        Raises:
+            RuntimeError: If no GPU available and ALLOW_CPU_INFERENCE is not set.
         """
         if self._config.device != "auto":
             return self._config.device
@@ -155,8 +158,16 @@ class SAM3VideoTracker:
             except Exception as e:
                 logger.warning(f"MPS available but failed test: {e}")
 
-        logger.info("Using CPU device")
-        return "cpu"
+        # CPU fallback - only allowed if explicitly enabled (prevents silent 60x slowdown)
+        if os.environ.get("ALLOW_CPU_INFERENCE", "").lower() == "true":
+            logger.warning("Using CPU device (ALLOW_CPU_INFERENCE=true)")
+            return "cpu"
+
+        raise RuntimeError(
+            "No GPU available (CUDA/MPS) and ALLOW_CPU_INFERENCE is not set. "
+            "Set ALLOW_CPU_INFERENCE=true to allow CPU inference (very slow). "
+            "On cloud, check CUDA driver compatibility with PyTorch base image."
+        )
 
     def _load_predictor(self) -> None:
         """Lazy load SAM3 video model and processor."""
