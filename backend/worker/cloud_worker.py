@@ -30,92 +30,60 @@ class CloudWorker:
         self._config = config
         self._worker_id = config.worker_id or f"{socket.gethostname()}-{uuid.uuid4().hex[:8]}"
         self._last_job_time: float = time.time()  # Track when we last processed a job
-        self._cache_uploaded: bool = False  # Track if we've uploaded torch cache this session
 
     async def _warmup_model(self) -> None:
-        """Warmup model by downloading cache or compiling before accepting jobs.
+        """Warmup model by running inference before accepting jobs.
 
-        This ensures the first real job doesn't pay the compilation cost.
+        This ensures the first real job doesn't pay the model loading cost.
+        Note: We use cudagraphs backend which compiles to GPU memory, not disk.
+        Cache upload/download only works with inductor backend.
         """
-        import numpy as np
-        from PIL import Image
+        if not torch.cuda.is_available():
+            logger.info("No CUDA available, skipping warmup")
+            return
 
-        # Step 1: Try to download existing torch compile cache from R2
-        logger.info("Checking for existing torch compile cache in R2...")
-        cache_exists = False
+        logger.info("Warming up model (loading to GPU)...")
         try:
-            cache_exists = await asyncio.to_thread(self._storage.download_torch_cache)
-            if cache_exists:
-                logger.info("Restored torch compile cache from R2")
-        except Exception as e:
-            logger.warning(f"Failed to restore torch cache: {e}")
+            from app.ml.sam3_tracker import SAM3VideoTracker, SAM3TrackerConfig
+            import numpy as np
+            from PIL import Image
 
-        # Step 2: If no cache, run warmup inference to compile the model
-        if not cache_exists and torch.cuda.is_available():
-            logger.info("No cache found - warming up model (this triggers compilation)...")
+            # Create tracker with torch.compile enabled
+            config = SAM3TrackerConfig(
+                prompt="basketball player",
+                use_torch_compile=True,
+                use_half_precision=True,
+            )
+            tracker = SAM3VideoTracker(config)
+
+            # Run a dummy inference to load model and trigger cudagraphs compilation
+            logger.info("Running warmup inference...")
+            dummy_frame = Image.fromarray(
+                np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+            )
+
             try:
-                from app.ml.sam3_tracker import SAM3VideoTracker, SAM3TrackerConfig
-
-                # Create tracker with torch.compile enabled
-                # Use same prompt as production to ensure identical code paths
-                config = SAM3TrackerConfig(
-                    prompt="basketball player",
-                    use_torch_compile=True,
-                    use_half_precision=True,
-                )
-                tracker = SAM3VideoTracker(config)
-
-                # Run a dummy inference to trigger compilation
-                # Create a small fake "video" - just a few frames
-                logger.info("Running warmup inference to compile model graphs...")
-                dummy_frames = [
-                    Image.fromarray(np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8))
-                    for _ in range(3)
-                ]
-
-                # Process the dummy frames (this triggers torch.compile)
-                for frame_idx, frame in enumerate(dummy_frames):
-                    try:
-                        # Call the model's internal method to process a frame
-                        tracker._load_predictor()  # Ensure model is loaded
-                        # Process through the model to trigger compilation
-                        inputs = tracker._processor(
-                            images=frame,
-                            return_tensors="pt"
-                        ).to(tracker._device)
-                        with torch.no_grad():
-                            _ = tracker._model.image_encoder(inputs["pixel_values"])
-                        logger.info(f"Warmup frame {frame_idx + 1}/3 processed")
-                    except Exception as e:
-                        logger.warning(f"Warmup frame {frame_idx + 1} failed: {e}")
-                        break
-
-                # Clean up
-                del tracker
-                gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-
-                logger.info("Model warmup complete")
-
-                # Step 3: Upload the compiled cache to R2 for future pods
-                logger.info("Uploading torch compile cache to R2...")
-                try:
-                    uploaded = await asyncio.to_thread(self._storage.upload_torch_cache)
-                    if uploaded:
-                        self._cache_uploaded = True
-                        logger.info("Torch compile cache uploaded to R2")
-                except Exception as e:
-                    logger.warning(f"Failed to upload torch cache: {e}")
-
+                tracker._load_predictor()  # Load model to GPU
+                inputs = tracker._processor(
+                    images=dummy_frame,
+                    return_tensors="pt"
+                ).to(tracker._device)
+                with torch.no_grad():
+                    _ = tracker._model.image_encoder(inputs["pixel_values"])
+                logger.info("Warmup inference complete")
             except Exception as e:
-                logger.error(f"Model warmup failed: {e}")
-                # Continue anyway - first job will just be slower
-        else:
-            if cache_exists:
-                logger.info("Using cached compilation from R2")
-            elif not torch.cuda.is_available():
-                logger.info("No CUDA available, skipping warmup")
+                logger.warning(f"Warmup inference failed: {e}")
+
+            # Clean up
+            del tracker
+            gc.collect()
+            torch.cuda.empty_cache()
+
+            logger.info("Model warmup complete")
+
+        except Exception as e:
+            logger.error(f"Model warmup failed: {e}")
+            # Continue anyway - first job will just be slower
 
     async def run(self, shutdown_event: asyncio.Event, single_job: bool = False) -> None:
         """Main processing loop.
@@ -126,7 +94,7 @@ class CloudWorker:
         """
         logger.info(f"Cloud worker {self._worker_id} starting...")
 
-        # Warmup: Download cache or compile model BEFORE accepting jobs
+        # Warmup: Load model to GPU BEFORE accepting jobs
         await self._warmup_model()
 
         # Reset any orphaned jobs from previous crashed workers
@@ -237,15 +205,6 @@ class CloudWorker:
         await asyncio.to_thread(self._storage.upload_job_manifest, job)
 
         logger.info(f"Job {job.job_id} completed: {len(detections)} detections")
-
-        # Upload torch compile cache after first job (for future pods)
-        if not self._cache_uploaded:
-            try:
-                uploaded = await asyncio.to_thread(self._storage.upload_torch_cache)
-                if uploaded:
-                    self._cache_uploaded = True
-            except Exception as e:
-                logger.warning(f"Failed to upload torch cache: {e}")
 
     async def _run_detection(self, job: JobManifest, video_path: Path) -> list[dict]:
         """Run SAM3 detection on video.
