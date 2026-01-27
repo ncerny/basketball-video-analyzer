@@ -196,15 +196,24 @@ class SAM3VideoTracker:
                 local_files_only=(model_path != "facebook/sam3"),
             ).to(self._device)
 
-            # torch.compile is disabled for SAM3 due to compatibility issues:
-            # - inductor backend: crashes with weakref error on permute operations
-            # - cudagraphs backend: 60x slowdown due to constant recompilation from dynamic shapes
-            # The model runs fine without compilation at ~1 min per 100 frames.
+            # Apply torch.compile for GPU speedup
+            # Note: The default inductor backend has bugs with SAM3's permute operations,
+            # so we use cudagraphs backend which provides GPU optimization without inductor
             if self._config.use_torch_compile and self._device == "cuda":
-                logger.info(
-                    "torch.compile() is disabled for SAM3 due to compatibility issues. "
-                    "Running in eager mode."
-                )
+                logger.info("Applying torch.compile() optimization (this may take a moment)...")
+                try:
+                    # cudagraphs backend: Uses CUDA graphs for optimization
+                    # without triggering inductor's buggy AOT autograd tracing
+                    self._model = torch.compile(
+                        self._model,
+                        backend="cudagraphs",
+                        dynamic=False,  # cudagraphs requires static shapes
+                    )
+                    logger.info("torch.compile() with cudagraphs backend applied successfully")
+                except Exception as e:
+                    logger.warning(
+                        f"torch.compile() failed at setup, running without compilation: {e}"
+                    )
 
             self._processor = Sam3VideoProcessor.from_pretrained(
                 model_path,

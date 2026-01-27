@@ -72,4 +72,11 @@ ENV PYTHONPATH=/app
 ENV CLOUD_MODEL_PATH=/models/sam3
 ENV TOKENIZERS_PARALLELISM=false
 
+# torch.compile optimization settings
+# Use multiple threads for compilation (default is 1)
+ENV TORCHINDUCTOR_COMPILE_THREADS=8
+# Enable graph caching to speed up subsequent runs
+ENV TORCHINDUCTOR_FX_GRAPH_CACHE=1
+ENV TORCHINDUCTOR_CACHE_DIR=/tmp/torch_compile_cache
+
 CMD ["python", "-m", "worker", "--cloud"]
