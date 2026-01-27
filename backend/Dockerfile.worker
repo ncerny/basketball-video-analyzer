@@ -76,6 +76,6 @@ ENV PYTHONPATH=/app
 ENV CLOUD_MODEL_PATH=/models/sam3
 ENV TOKENIZERS_PARALLELISM=false
 # Disable torch.compile until we fix the compilation slowness
-ENV SAM3_USE_TORCH_COMPILE=false
+ENV SAM3_USE_TORCH_COMPILE=0
 
 CMD ["python", "-m", "worker", "--cloud"]

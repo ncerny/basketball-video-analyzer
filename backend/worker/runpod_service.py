@@ -195,15 +195,16 @@ class RunPodService:
 
                 # Build env vars - R2 credentials + SAM3 settings
                 # Note: This may override template env vars, so include everything needed
+                # SAM3_USE_TORCH_COMPILE is set in Dockerfile (disabled for now due to
+                # incompatibility with SAM3's stateful video processing)
                 pod_env = {
                     # R2 credentials (secrets - not in template)
                     "R2_ACCOUNT_ID": settings.r2_account_id,
                     "R2_ACCESS_KEY_ID": settings.r2_access_key_id,
                     "R2_SECRET_ACCESS_KEY": settings.r2_secret_access_key,
                     "R2_BUCKET_NAME": settings.r2_bucket_name,
-                    # SAM3 settings
+                    # SAM3 settings (torch_compile controlled by Dockerfile)
                     "SAM3_MEMORY_WINDOW_SIZE": str(settings.sam3_memory_window_size),
-                    "SAM3_USE_TORCH_COMPILE": str(settings.sam3_use_torch_compile).lower(),
                     "SAM3_CONFIDENCE_THRESHOLD": str(settings.sam3_confidence_threshold),
                 }
 
