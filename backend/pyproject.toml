@@ -42,7 +42,7 @@ opencv-python-headless = "^4.9.0"
 ffmpeg-python = "^0.2.0"
 
 [tool.poetry.group.ml.dependencies]
-torch = ">=2.6.0"
+torch = ">=2.9.0"
 torchvision = ">=0.21.0"
 numpy = "<2.0.0"
 transformers = {git = "https://github.com/huggingface/transformers.git", branch = "main"}  # SAM3 requires main branch
