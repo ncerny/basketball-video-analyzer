@@ -43,12 +43,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY models/sam3 /models/sam3
 
 # Copy exported requirements and install with pip (faster than poetry)
-# - Filter torch/torchvision (base image has ABI-compatible prebuilt versions)
+# - Filter torch/torchvision/nvidia-*/triton (base image has ABI-compatible prebuilt versions)
 # - Filter transformers (installed from git below)
 # - Convert == to >= so pip uses existing packages if they satisfy requirements
 #   (e.g., base has certifi 2026.1.4, requirements say >=2025.11.12, no reinstall needed)
 COPY --from=requirements /build/requirements.txt ./
-RUN grep -vE "^(transformers|torch[^a-z]|torchvision)" requirements.txt | \
+RUN grep -vE "^(transformers|torch[^a-z]|torchvision|nvidia-|triton)" requirements.txt | \
     sed 's/==/>=/' > requirements-filtered.txt && \
     mv requirements-filtered.txt requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
