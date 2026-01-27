@@ -55,8 +55,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --break-system-packages --upgrade-strategy only-if-needed -r requirements.txt
 
 # Install transformers from git (SAM3 requires main branch, poetry git export format can fail)
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --break-system-packages "transformers @ git+https://github.com/huggingface/transformers.git@main"
+# Use --force-reinstall to ensure we get latest from git, not a cached version
+RUN pip install --break-system-packages --no-cache-dir --force-reinstall \
+    "transformers @ git+https://github.com/huggingface/transformers.git@main"
 
 # Apply patches to fix bugs in dependencies (e.g., transformers SAM3 video)
 COPY patches/ ./patches/
