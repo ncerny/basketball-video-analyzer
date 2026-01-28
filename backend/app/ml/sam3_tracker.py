@@ -307,12 +307,14 @@ class SAM3VideoTracker:
             # - CUDA: Keep everything on GPU for best performance with torch.compile
             # - MPS: Use CPU for state/storage to reduce memory fragmentation on unified memory
             if self._device == "cuda":
-                # CUDA: all on GPU for optimal torch.compile performance
+                # CUDA: inference on GPU, but store frame features on CPU to avoid OOM
+                # This allows processing long videos (8000+ frames) without running
+                # out of GPU memory. Features are moved to GPU on-demand during inference.
                 inference_session = self._processor.init_video_session(
                     inference_device=self._device,
                     inference_state_device=self._device,
                     processing_device=self._device,
-                    video_storage_device=self._device,
+                    video_storage_device="cpu",  # Offload frame features to CPU RAM
                     dtype=self._dtype,
                 )
             else:
