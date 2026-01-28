@@ -194,8 +194,9 @@ class RunPodService:
                 logger.info(f"Attempting to create pod with {gpu_type}...")
 
                 # Build env vars - R2 credentials + SAM3 settings
-                # Note: This may override template env vars, so include everything needed
-                # SAM3_USE_TORCH_COMPILE is set in Dockerfile (disabled for now due to
+                # Note: When using templates, template env vars may override what we pass here.
+                # Check template settings in RunPod console if env vars aren't applied.
+                # SAM3_USE_TORCH_COMPILE is controlled by Dockerfile (disabled due to
                 # incompatibility with SAM3's stateful video processing)
                 pod_env = {
                     # R2 credentials (secrets - not in template)
@@ -207,6 +208,11 @@ class RunPodService:
                     "SAM3_MEMORY_WINDOW_SIZE": str(settings.sam3_memory_window_size),
                     "SAM3_CONFIDENCE_THRESHOLD": str(settings.sam3_confidence_threshold),
                 }
+
+                logger.info(
+                    f"Creating pod with env: SAM3_MEMORY_WINDOW_SIZE={pod_env.get('SAM3_MEMORY_WINDOW_SIZE')}, "
+                    f"SAM3_CONFIDENCE_THRESHOLD={pod_env.get('SAM3_CONFIDENCE_THRESHOLD')}"
+                )
 
                 pod = runpod.create_pod(
                     name=pod_name,

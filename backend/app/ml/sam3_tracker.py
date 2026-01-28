@@ -303,18 +303,22 @@ class SAM3VideoTracker:
                 return
 
             # Initialize streaming video session (no video parameter = streaming mode)
-            # Device placement strategy:
-            # - CUDA: Keep everything on GPU for best performance with torch.compile
-            # - MPS: Use CPU for state/storage to reduce memory fragmentation on unified memory
+            # Device placement strategy for memory management:
+            # - inference_device: Where model computations run (GPU for speed)
+            # - inference_state_device: Where per-frame tracking memory accumulates
+            #   (maskmem_features, maskmem_pos_enc) - CPU to avoid OOM on long videos
+            # - processing_device: Where intermediate processing happens (GPU)
+            # - video_storage_device: Where processed frame pixels are stored (CPU)
             if self._device == "cuda":
-                # CUDA: inference on GPU, but store frame features on CPU to avoid OOM
-                # This allows processing long videos (8000+ frames) without running
-                # out of GPU memory. Features are moved to GPU on-demand during inference.
+                # CUDA: inference on GPU, but offload accumulated state to CPU
+                # This prevents OOM on long videos (8000+ frames) by storing
+                # per-frame memory features in CPU RAM instead of GPU VRAM.
+                # Features are moved to GPU on-demand during inference.
                 inference_session = self._processor.init_video_session(
                     inference_device=self._device,
-                    inference_state_device=self._device,
+                    inference_state_device="cpu",  # Critical: offload tracking memory to CPU
                     processing_device=self._device,
-                    video_storage_device="cpu",  # Offload frame features to CPU RAM
+                    video_storage_device="cpu",  # Offload frame pixels to CPU
                     dtype=self._dtype,
                 )
             else:

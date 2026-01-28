@@ -246,6 +246,15 @@ async def main():
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
+    # Debug: Show SAM3-related env vars and settings
+    sam3_env_vars = {k: v for k, v in os.environ.items() if "SAM3" in k.upper()}
+    logger.info(f"SAM3 env vars: {sam3_env_vars}")
+    logger.info(
+        f"SAM3 settings: memory_window_size={settings.sam3_memory_window_size}, "
+        f"confidence_threshold={settings.sam3_confidence_threshold}, "
+        f"use_torch_compile={settings.sam3_use_torch_compile}"
+    )
+
     if not settings.r2_account_id:
         logger.error("R2 not configured. Set R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY")
         sys.exit(1)
