@@ -193,18 +193,9 @@ class RunPodService:
             try:
                 logger.info(f"Attempting to create pod with {gpu_type}...")
 
-                # Build env vars - only pass secrets that can't be in template
-                # SAM3 settings (memory_window, confidence, torch_compile) are controlled
-                # by Dockerfile defaults and can be overridden via RunPod template env vars
-                pod_env = {
-                    "R2_ACCOUNT_ID": settings.r2_account_id,
-                    "R2_ACCESS_KEY_ID": settings.r2_access_key_id,
-                    "R2_SECRET_ACCESS_KEY": settings.r2_secret_access_key,
-                    "R2_BUCKET_NAME": settings.r2_bucket_name,
-                }
-
-                logger.info(f"Creating pod with R2 credentials (SAM3 settings from template/Dockerfile)")
-
+                # All env vars (R2 credentials, SAM3 settings) are configured in the
+                # RunPod template. This keeps secrets out of the API and gives the
+                # template full control over pod configuration.
                 pod = runpod.create_pod(
                     name=pod_name,
                     image_name="",  # Uses template's image
@@ -212,7 +203,6 @@ class RunPodService:
                     template_id=self._template_id,
                     container_disk_in_gb=settings.runpod_container_disk_gb,
                     volume_in_gb=settings.runpod_volume_disk_gb if settings.runpod_volume_disk_gb > 0 else None,
-                    env=pod_env,
                 )
 
                 if pod and pod.get("id"):
