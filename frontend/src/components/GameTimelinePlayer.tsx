@@ -97,7 +97,7 @@ export const GameTimelinePlayer: React.FC<GameTimelinePlayerProps> = ({
 
     // Load detections and jersey numbers when video changes
     if (video && showDetections) {
-      detectionAPI.getVideoDetections(video.id, { limit: 50000 })
+      detectionAPI.getVideoDetections(video.id, { limit: 300000 })
         .then(response => {
           setDetections(response.detections);
         })
@@ -155,7 +155,7 @@ export const GameTimelinePlayer: React.FC<GameTimelinePlayerProps> = ({
     setShowDetections(newValue);
 
     if (newValue && currentVideo) {
-      detectionAPI.getVideoDetections(currentVideo.id, { limit: 50000 })
+      detectionAPI.getVideoDetections(currentVideo.id, { limit: 300000 })
         .then(response => {
           setDetections(response.detections);
         })

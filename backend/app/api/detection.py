@@ -172,8 +172,8 @@ async def get_video_detections(
         float | None, Query(ge=0, le=1, description="Minimum confidence threshold")
     ] = None,
     limit: Annotated[
-        int, Query(ge=1, le=100000, description="Maximum detections to return")
-    ] = 10000,
+        int, Query(ge=1, le=500000, description="Maximum detections to return")
+    ] = 50000,
 ) -> VideoDetectionsResponse:
     """Get all player detections for a video.
 
