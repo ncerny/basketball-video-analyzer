@@ -38,6 +38,7 @@ class Video(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     game_id: Mapped[int] = mapped_column(ForeignKey("games.id", ondelete="CASCADE"))
     file_path: Mapped[str] = mapped_column(String(500))
+    r2_key: Mapped[str | None] = mapped_column(String(500), nullable=True)  # R2 storage key
     thumbnail_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     duration_seconds: Mapped[float] = mapped_column(Float)
     fps: Mapped[float] = mapped_column(Float)

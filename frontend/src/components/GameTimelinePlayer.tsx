@@ -42,6 +42,10 @@ import type { AggregatedJerseyNumber } from '../api/jerseyNumbers';
 import type { Video } from '../types/timeline';
 import type { Detection } from '../types/api';
 
+// Windowed detection loading parameters
+const WINDOW_SIZE = 1000;        // frames (~33 seconds at 30fps)
+const BUFFER_THRESHOLD = 300;    // frames from edge to trigger prefetch
+
 interface GameTimelinePlayerProps {
   /** CSS class name for the container */
   className?: string;
@@ -90,22 +94,97 @@ export const GameTimelinePlayer: React.FC<GameTimelinePlayerProps> = ({
   const [currentFrame, setCurrentFrame] = useState(0);
   const videoContainerRef = useRef<HTMLDivElement | null>(null);
 
+  // Windowed detection loading state
+  const [loadedRange, setLoadedRange] = useState<{start: number, end: number} | null>(null);
+  const [_isLoadingDetections, setIsLoadingDetections] = useState(false); // For future UI indicator
+  const loadingRef = useRef(false); // Prevent concurrent fetches
+
+  // Fetch detections for a window around the target frame
+  const fetchWindow = useCallback(async (
+    videoId: number,
+    targetFrame: number,
+    mode: 'replace' | 'extend-forward' | 'extend-backward' = 'replace'
+  ) => {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
+    setIsLoadingDetections(true);
+
+    try {
+      let frameStart: number;
+      let frameEnd: number;
+
+      if (mode === 'replace') {
+        // Center window on target frame
+        frameStart = Math.max(0, targetFrame - Math.floor(WINDOW_SIZE / 2));
+        frameEnd = targetFrame + Math.floor(WINDOW_SIZE / 2);
+      } else if (mode === 'extend-forward') {
+        // Fetch next window (for forward playback)
+        frameStart = loadedRange?.end ?? targetFrame;
+        frameEnd = frameStart + WINDOW_SIZE;
+      } else {
+        // Fetch previous window (for backward playback)
+        frameEnd = loadedRange?.start ?? targetFrame;
+        frameStart = Math.max(0, frameEnd - WINDOW_SIZE);
+      }
+
+      const response = await detectionAPI.getVideoDetections(videoId, {
+        frame_start: frameStart,
+        frame_end: frameEnd,
+        limit: 50000, // ~1600 frames * 31 detections/frame = ~50k max
+      });
+
+      if (mode === 'replace') {
+        setDetections(response.detections);
+        setLoadedRange({ start: frameStart, end: frameEnd });
+      } else if (mode === 'extend-forward') {
+        // Merge and trim old detections
+        const trimStart = targetFrame - WINDOW_SIZE;
+        setDetections(prev => {
+          const trimmed = prev.filter(d => d.frame_number >= trimStart);
+          return [...trimmed, ...response.detections];
+        });
+        setLoadedRange(prev => ({
+          start: Math.max(trimStart, prev?.start ?? 0),
+          end: frameEnd,
+        }));
+      } else {
+        // Merge backward and trim future detections
+        const trimEnd = targetFrame + WINDOW_SIZE;
+        setDetections(prev => {
+          const trimmed = prev.filter(d => d.frame_number <= trimEnd);
+          return [...response.detections, ...trimmed];
+        });
+        setLoadedRange(prev => ({
+          start: frameStart,
+          end: Math.min(trimEnd, prev?.end ?? frameEnd),
+        }));
+      }
+    } catch (err) {
+      console.error('Failed to load detections:', err);
+      if (mode === 'replace') {
+        setDetections([]);
+        setLoadedRange(null);
+      }
+    } finally {
+      loadingRef.current = false;
+      setIsLoadingDetections(false);
+    }
+  }, [loadedRange]);
+
   // Handle video change from MultiVideoPlayer
   const handleVideoChange = useCallback((video: Video | null) => {
     setCurrentVideo(video);
     onVideoChange?.(video);
 
+    // Reset detection state on video change
+    setLoadedRange(null);
+
     // Load detections and jersey numbers when video changes
     if (video && showDetections) {
-      detectionAPI.getVideoDetections(video.id, { limit: 50000 })
-        .then(response => {
-          setDetections(response.detections);
-        })
-        .catch(err => {
-          console.error('Failed to load detections:', err);
-          setDetections([]);
-        });
+      // Windowed detection loading - start at frame 0
+      fetchWindow(video.id, 0, 'replace');
 
+      // Jersey numbers are small, load all at once
       jerseyNumbersAPI.getByTrack(video.id)
         .then(response => {
           const map = new Map<number, AggregatedJerseyNumber>();
@@ -122,7 +201,7 @@ export const GameTimelinePlayer: React.FC<GameTimelinePlayerProps> = ({
       setDetections([]);
       setJerseyNumbers(new Map());
     }
-  }, [onVideoChange, showDetections]);
+  }, [onVideoChange, showDetections, fetchWindow]);
 
   // Check gap status from store
   const videoTimeResult = getCurrentVideoTime();
@@ -131,7 +210,7 @@ export const GameTimelinePlayer: React.FC<GameTimelinePlayerProps> = ({
     onGapChange?.(videoTimeResult.isInGap);
   }
 
-  // Update current frame when video time changes
+  // Update current frame when video time changes and handle windowed loading
   useEffect(() => {
     if (!videoElement || !currentVideo) return;
 
@@ -139,6 +218,27 @@ export const GameTimelinePlayer: React.FC<GameTimelinePlayerProps> = ({
       const fps = currentVideo.fps || 30;
       const frame = Math.floor(videoElement.currentTime * fps);
       setCurrentFrame(frame);
+
+      // Handle windowed detection loading
+      if (!showDetections || !loadedRange) return;
+
+      // Check if we seeked outside the loaded range
+      if (frame < loadedRange.start || frame > loadedRange.end) {
+        // Seek outside loaded range - fetch new window centered on current frame
+        fetchWindow(currentVideo.id, frame, 'replace');
+        return;
+      }
+
+      // Check if approaching end of loaded range (forward playback)
+      if (frame > loadedRange.end - BUFFER_THRESHOLD) {
+        fetchWindow(currentVideo.id, frame, 'extend-forward');
+        return;
+      }
+
+      // Check if approaching start of loaded range (backward playback)
+      if (frame < loadedRange.start + BUFFER_THRESHOLD && loadedRange.start > 0) {
+        fetchWindow(currentVideo.id, frame, 'extend-backward');
+      }
     };
 
     // Update on time update
@@ -148,22 +248,17 @@ export const GameTimelinePlayer: React.FC<GameTimelinePlayerProps> = ({
     return () => {
       videoElement.removeEventListener('timeupdate', updateFrame);
     };
-  }, [videoElement, currentVideo]);
+  }, [videoElement, currentVideo, showDetections, loadedRange, fetchWindow]);
 
   const toggleDetections = useCallback(() => {
     const newValue = !showDetections;
     setShowDetections(newValue);
 
     if (newValue && currentVideo) {
-      detectionAPI.getVideoDetections(currentVideo.id, { limit: 50000 })
-        .then(response => {
-          setDetections(response.detections);
-        })
-        .catch(err => {
-          console.error('Failed to load detections:', err);
-          setDetections([]);
-        });
+      // Windowed detection loading - center on current frame
+      fetchWindow(currentVideo.id, currentFrame, 'replace');
 
+      // Jersey numbers are small, load all at once
       jerseyNumbersAPI.getByTrack(currentVideo.id)
         .then(response => {
           const map = new Map<number, AggregatedJerseyNumber>();
@@ -178,9 +273,10 @@ export const GameTimelinePlayer: React.FC<GameTimelinePlayerProps> = ({
         });
     } else if (!newValue) {
       setDetections([]);
+      setLoadedRange(null);
       setJerseyNumbers(new Map());
     }
-  }, [showDetections, currentVideo]);
+  }, [showDetections, currentVideo, currentFrame, fetchWindow]);
 
   // Calculate total duration
   const totalDuration = useMemo(

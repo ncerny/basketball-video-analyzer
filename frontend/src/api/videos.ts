@@ -2,7 +2,7 @@
  * Videos API endpoints
  */
 
-import type { Video } from '../types/api'
+import type { Video, StreamUrlResponse } from '../types/api'
 import { apiClient } from './client'
 
 export const videosAPI = {
@@ -50,5 +50,20 @@ export const videosAPI = {
    */
   async deleteVideo(id: number): Promise<void> {
     await apiClient.delete(`/videos/${id}`)
+  },
+
+  /**
+   * Get a presigned URL for streaming a video from R2
+   *
+   * @param id - Video ID
+   * @param expiresIn - URL expiration in seconds (default 4 hours)
+   * @returns Presigned URL and expiration time
+   */
+  async getStreamUrl(id: number, expiresIn: number = 14400): Promise<StreamUrlResponse> {
+    const response = await apiClient.get<StreamUrlResponse>(
+      `/videos/${id}/stream-url`,
+      { params: { expires_in: expiresIn } }
+    )
+    return response.data
   },
 }

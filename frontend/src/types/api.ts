@@ -43,6 +43,7 @@ export interface Video {
   id: number
   game_id: number
   file_path: string
+  r2_key?: string // Cloudflare R2 storage key
   thumbnail_path?: string
   duration_seconds: number
   fps: number
@@ -53,6 +54,12 @@ export interface Video {
   recorded_at?: string
   sequence_order?: number
   game_time_offset?: number
+}
+
+// Stream URL response
+export interface StreamUrlResponse {
+  url: string
+  expires_in: number // seconds
 }
 
 export interface VideoList {

@@ -1,0 +1,90 @@
+# backend/Dockerfile.worker
+# Cloud worker image with SAM3 model baked in
+#
+# Build:
+#   DOCKER_BUILDKIT=1 docker build --platform linux/amd64 -f Dockerfile.worker -t basketball-analyzer-worker .
+#
+# Run:
+#   docker run --gpus all -e R2_ACCOUNT_ID=xxx -e R2_ACCESS_KEY_ID=xxx \
+#     -e R2_SECRET_ACCESS_KEY=xxx -e R2_BUCKET_NAME=xxx \
+#     basketball-analyzer-worker
+
+# ============================================================================
+# Stage 1: Export requirements from poetry (small, fast, cached)
+# ============================================================================
+FROM python:3.11-slim AS requirements
+
+WORKDIR /build
+RUN pip install poetry poetry-plugin-export
+
+COPY pyproject.toml poetry.lock* ./
+RUN poetry export --only main,ml,video --without-hashes -f requirements.txt -o requirements.txt
+# Note: excludes api group (fastapi, uvicorn, alembic, rfdetr, norfair, runpod)
+
+# ============================================================================
+# Stage 2: Runtime image
+# ============================================================================
+FROM pytorch/pytorch:2.9.1-cuda12.8-cudnn9-runtime
+
+WORKDIR /app
+
+# Install system dependencies (rarely changes - cached)
+# g++ is needed for triton JIT compilation (torch.compile uses C++ compiler)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    libgl1 \
+    libglib2.0-0 \
+    git \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy SAM3 model EARLY - it's huge (~6GB) but rarely changes
+# This layer gets cached and reused across code changes
+COPY models/sam3 /models/sam3
+
+# Copy exported requirements and install with pip (faster than poetry)
+# Filter packages that come with PyTorch base image to avoid slow reinstalls:
+# - torch/torchvision/triton/nvidia-*/cuda-* (CUDA libraries - MUST match base image)
+# - PyTorch deps: filelock, fsspec, jinja2, markupsafe, mpmath, networkx, numpy,
+#   packaging, pillow, setuptools, sympy, typing-extensions (already installed)
+# - transformers (installed from git below)
+# Convert == to >= so pip uses existing packages if they satisfy requirements
+COPY --from=requirements /build/requirements.txt ./
+RUN grep -vE "^(transformers|torch[^a-z]|torchvision|triton|nvidia-|cuda-|filelock|fsspec|jinja2|markupsafe|mpmath|networkx|numpy|packaging|pillow|setuptools|sympy|typing-extensions)" requirements.txt | \
+    sed 's/==/>=/' > requirements-filtered.txt && \
+    mv requirements-filtered.txt requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --break-system-packages --upgrade-strategy only-if-needed -r requirements.txt
+
+# Install transformers from git (SAM3 requires main branch, poetry git export format can fail)
+# Use --no-deps to avoid reinstalling torch/torchvision (base image versions must match)
+# Use --force-reinstall to ensure we get latest transformers from git, not cached
+RUN pip install --break-system-packages --no-cache-dir --force-reinstall --no-deps \
+    "transformers @ git+https://github.com/huggingface/transformers.git@main"
+
+# Apply patches to fix bugs in dependencies (e.g., transformers SAM3 video)
+COPY patches/ ./patches/
+RUN bash patches/fix_sam3_video_text_embeds.sh && \
+    bash patches/fix_sam3_torch_compile.sh
+
+# Copy application code LAST - changes most frequently
+COPY app/ ./app/
+COPY worker/ ./worker/
+
+# Environment
+ENV PYTHONPATH=/app
+ENV CLOUD_MODEL_PATH=/models/sam3
+ENV TOKENIZERS_PARALLELISM=false
+
+# SAM3 settings (defaults - can be overridden by template/pod env vars)
+# Disable torch.compile (incompatible with SAM3's stateful video processing)
+ENV SAM3_USE_TORCH_COMPILE=0
+# Memory window: 0=keep all frames (best tracking), >0=rolling window (less memory)
+# Note: video_storage_device="cpu" should allow window=0 without OOM
+ENV SAM3_MEMORY_WINDOW_SIZE=0
+
+# CUDA memory optimization (reduces fragmentation on long videos)
+# This may allow full video processing without OOM by reducing reserved-but-unused memory
+ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+CMD ["python", "-m", "worker", "--cloud"]

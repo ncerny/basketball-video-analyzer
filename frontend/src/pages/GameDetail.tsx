@@ -532,7 +532,7 @@ export function GameDetail() {
                       <Stack gap="sm">
                         <Group justify="space-between" align="flex-start">
                           <div>
-                            <Text size="xs" c="dimmed">Video {video.sequence_order || video.id}</Text>
+                            <Text size="xs" c="dimmed">Video {video.sequence_order ?? video.id} (id {video.id})</Text>
                             <Text size="xs" c="dimmed" lineClamp={1} style={{ fontFamily: 'monospace' }}>
                               {video.file_path.split('/').pop()}
                             </Text>

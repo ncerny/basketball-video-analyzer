@@ -151,3 +151,8 @@ $RECYCLE.BIN/
 .directory
 .Trash-*
 .nfs*
+
+# Git worktrees
+.worktrees/
+
+backend/models

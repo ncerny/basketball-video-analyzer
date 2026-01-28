@@ -24,16 +24,6 @@ class Settings(BaseSettings):
 
     ml_models_path: str = "./models"
     ml_device: Literal["cpu", "mps", "cuda", "auto"] = "auto"
-    detection_backend: Literal["yolo", "rfdetr"] = "rfdetr"
-    tracking_backend: Literal["bytetrack", "norfair", "sam2"] = "norfair"
-    yolo_model_name: str = "yolov8s.pt"
-    yolo_confidence_threshold: float = 0.35
-    yolo_person_class_id: int = 0
-
-    # GPU-specific performance settings
-    yolo_batch_size_cpu: int = 8
-    yolo_batch_size_mps: int = 16
-    yolo_batch_size_cuda: int = 32
 
     # Enable performance logging
     enable_inference_timing: bool = False
@@ -60,22 +50,44 @@ class Settings(BaseSettings):
     identity_switch_min_readings: int = 3
     identity_switch_threshold: float = 0.7
 
-    # SAM2 tracking settings
-    sam2_model_name: Literal[
-        "sam2_hiera_tiny",
-        "sam2_hiera_small",
-        "sam2_hiera_base_plus",
-        "sam2_hiera_large",
-    ] = "sam2_hiera_tiny"
-    sam2_new_object_iou_threshold: float = 0.3  # IOU below this = new object
-    sam2_lost_track_frames: int = 0  # 0 = keep tracks for entire video (no cleanup)
-    sam2_max_memory_frames: int = 30  # Limit memory bank size
-    sam2_auto_download: bool = True  # Auto-download missing checkpoints
+    # SAM3 tracking settings
+    sam3_prompt: str = "basketball player"
+    sam3_confidence_threshold: float = 0.25
+    sam3_use_half_precision: bool = True
+    sam3_temp_frames_dir: Path = Path("/tmp/sam3_frames")
+    sam3_sample_interval: int = 1  # Must be 1 for stable tracking IDs
+    sam3_memory_window_size: int = 150  # Rolling window to bound memory (0 = keep all)
+    sam3_use_torch_compile: bool = False  # torch.compile() for 10-30% speedup (adds startup latency)
 
-    # SAM2 embedding-based re-identification
-    sam2_embedding_similarity_threshold: float = 0.35  # Min cosine similarity for re-ID (lowered for better matching)
-    sam2_color_tiebreaker_threshold: float = 0.15  # Use color when embedding scores within this
-    sam2_reidentification_enabled: bool = True  # Enable embedding-based re-ID
+    # Worker settings
+    # When True, detection jobs are queued in the database for an external worker process
+    # When False, detection runs in-process (blocking the API server)
+    use_external_worker: bool = True
+
+    # Cloud storage (Cloudflare R2)
+    r2_account_id: str = ""
+    r2_access_key_id: str = ""
+    r2_secret_access_key: str = ""
+    r2_bucket_name: str = "basketball-analyzer"
+
+    @property
+    def r2_endpoint_url(self) -> str:
+        """Generate R2 endpoint URL from account ID."""
+        if not self.r2_account_id:
+            return ""
+        return f"https://{self.r2_account_id}.r2.cloudflarestorage.com"
+
+    # Cloud worker settings
+    cloud_worker_poll_interval: float = 10.0
+    cloud_model_path: str = "/models/sam3"
+
+    # RunPod settings
+    runpod_api_key: str = ""
+    runpod_template_id: str = ""  # Template with our Docker image
+    runpod_gpu_preferences: str = "NVIDIA RTX PRO 6000 Blackwell Server Edition,NVIDIA RTX 4090,NVIDIA RTX A5000"  # Comma-separated, in order of preference
+    runpod_container_disk_gb: int = 50
+    runpod_volume_disk_gb: int = 0  # 0 = no persistent volume
+    runpod_idle_check_interval: int = 60  # Check for idle pods every 60 seconds
 
     @property
     def models_dir(self) -> Path:

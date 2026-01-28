@@ -9,6 +9,7 @@ export interface Video {
   id: number
   game_id: number
   file_path: string
+  r2_key?: string // Cloudflare R2 storage key
   duration_seconds: number
   fps: number
   resolution: string
