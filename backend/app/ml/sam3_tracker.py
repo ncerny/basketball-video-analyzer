@@ -395,6 +395,24 @@ class SAM3VideoTracker:
 
             logger.info(f"Streaming processing complete: {len(frame_paths)} frames")
 
+    def _get_genesis_frames(self, inference_session) -> set[int]:
+        """Get frames where objects were first detected (genesis frames).
+
+        These frames are preserved during pruning to maintain SAM3's reference
+        to where each object originated, preventing track ID fragmentation.
+
+        Returns:
+            Set of frame indices that should never be pruned.
+        """
+        genesis_frames = {0}  # Always keep frame 0 (initial prompt frame)
+
+        if hasattr(inference_session, "frames_tracked_per_obj"):
+            for obj_idx, tracked in inference_session.frames_tracked_per_obj.items():
+                if isinstance(tracked, set) and tracked:
+                    genesis_frames.add(min(tracked))
+
+        return genesis_frames
+
     def _prune_old_frames(
         self,
         inference_session,
@@ -406,6 +424,10 @@ class SAM3VideoTracker:
         This removes per-frame tracking outputs older than window_size frames
         to bound memory usage. Pruning only starts once current_frame_idx
         exceeds window_size.
+
+        IMPORTANT: Genesis frames (where objects were first detected) are
+        preserved to maintain tracking ID stability. This prevents SAM3 from
+        losing its reference to object origins.
 
         Prunes the following structures (see bbva-4f8 for research):
         - non_cond_frame_outputs: Per-frame mask/memory features
@@ -427,16 +449,27 @@ class SAM3VideoTracker:
 
         cutoff_frame = current_frame_idx - window_size
 
+        # Get genesis frames BEFORE any pruning (these are preserved)
+        genesis_frames = self._get_genesis_frames(inference_session)
+        if current_frame_idx == window_size:
+            # Log once when pruning first starts
+            logger.info(
+                f"Memory pruning started at frame {current_frame_idx}. "
+                f"Preserving {len(genesis_frames)} genesis frames: {sorted(genesis_frames)[:10]}..."
+            )
+
         # Prune per-object frame outputs (non-conditioning and conditioning)
         if hasattr(inference_session, "output_dict_per_obj"):
             for obj_idx in list(inference_session.output_dict_per_obj.keys()):
                 obj_outputs = inference_session.output_dict_per_obj[obj_idx]
 
                 # Prune non-conditioning frame outputs (the bulk of memory)
+                # but preserve genesis frames for tracking stability
                 if "non_cond_frame_outputs" in obj_outputs:
                     non_cond = obj_outputs["non_cond_frame_outputs"]
                     frames_to_remove = [
-                        f for f in non_cond.keys() if f < cutoff_frame
+                        f for f in non_cond.keys()
+                        if f < cutoff_frame and f not in genesis_frames
                     ]
                     for f in frames_to_remove:
                         del non_cond[f]
@@ -452,24 +485,30 @@ class SAM3VideoTracker:
         # - mask_inputs_per_obj / point_inputs_per_obj (prompts)
 
         # Prune frame-wise tracker scores (metadata only - safe)
+        # Preserve genesis frames here too for consistency
         if hasattr(inference_session, "obj_id_to_tracker_score_frame_wise"):
             for obj_id in list(
                 inference_session.obj_id_to_tracker_score_frame_wise.keys()
             ):
                 scores = inference_session.obj_id_to_tracker_score_frame_wise[obj_id]
                 if isinstance(scores, dict):
-                    frames_to_remove = [f for f in scores.keys() if f < cutoff_frame]
+                    frames_to_remove = [
+                        f for f in scores.keys()
+                        if f < cutoff_frame and f not in genesis_frames
+                    ]
                     for f in frames_to_remove:
                         del scores[f]
 
-        # Prune frames_tracked_per_obj
+        # Prune frames_tracked_per_obj - but NEVER remove genesis frame info
+        # We keep the min frame for each object to preserve genesis knowledge
         if hasattr(inference_session, "frames_tracked_per_obj"):
             for obj_idx in list(inference_session.frames_tracked_per_obj.keys()):
                 tracked = inference_session.frames_tracked_per_obj[obj_idx]
-                if isinstance(tracked, set):
-                    inference_session.frames_tracked_per_obj[obj_idx] = {
-                        f for f in tracked if f >= cutoff_frame
-                    }
+                if isinstance(tracked, set) and tracked:
+                    genesis = min(tracked)  # Preserve the genesis frame reference
+                    pruned = {f for f in tracked if f >= cutoff_frame}
+                    pruned.add(genesis)  # Always keep genesis
+                    inference_session.frames_tracked_per_obj[obj_idx] = pruned
 
         # Force garbage collection
         # NOTE: Do NOT call torch.mps.empty_cache() here - it causes dtype
