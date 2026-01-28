@@ -193,26 +193,17 @@ class RunPodService:
             try:
                 logger.info(f"Attempting to create pod with {gpu_type}...")
 
-                # Build env vars - R2 credentials + SAM3 settings
-                # Note: When using templates, template env vars may override what we pass here.
-                # Check template settings in RunPod console if env vars aren't applied.
-                # SAM3_USE_TORCH_COMPILE is controlled by Dockerfile (disabled due to
-                # incompatibility with SAM3's stateful video processing)
+                # Build env vars - only pass secrets that can't be in template
+                # SAM3 settings (memory_window, confidence, torch_compile) are controlled
+                # by Dockerfile defaults and can be overridden via RunPod template env vars
                 pod_env = {
-                    # R2 credentials (secrets - not in template)
                     "R2_ACCOUNT_ID": settings.r2_account_id,
                     "R2_ACCESS_KEY_ID": settings.r2_access_key_id,
                     "R2_SECRET_ACCESS_KEY": settings.r2_secret_access_key,
                     "R2_BUCKET_NAME": settings.r2_bucket_name,
-                    # SAM3 settings (torch_compile controlled by Dockerfile)
-                    "SAM3_MEMORY_WINDOW_SIZE": str(settings.sam3_memory_window_size),
-                    "SAM3_CONFIDENCE_THRESHOLD": str(settings.sam3_confidence_threshold),
                 }
 
-                logger.info(
-                    f"Creating pod with env: SAM3_MEMORY_WINDOW_SIZE={pod_env.get('SAM3_MEMORY_WINDOW_SIZE')}, "
-                    f"SAM3_CONFIDENCE_THRESHOLD={pod_env.get('SAM3_CONFIDENCE_THRESHOLD')}"
-                )
+                logger.info(f"Creating pod with R2 credentials (SAM3 settings from template/Dockerfile)")
 
                 pod = runpod.create_pod(
                     name=pod_name,
