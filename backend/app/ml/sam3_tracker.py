@@ -463,10 +463,24 @@ class SAM3VideoTracker:
         if current_frame_idx % 1000 == 0:
             import psutil
             mem = psutil.Process().memory_info()
+
+            # Debug: list all dict-like attributes in inference_session to find what's growing
+            dict_attrs = {}
+            for attr in dir(inference_session):
+                if attr.startswith("_"):
+                    continue
+                try:
+                    val = getattr(inference_session, attr)
+                    if isinstance(val, dict):
+                        dict_attrs[attr] = len(val)
+                except Exception:
+                    pass
+
             logger.info(
                 f"Frame {current_frame_idx} memory: RSS={mem.rss / 1024**3:.1f}GB, "
                 f"genesis_frames={len(genesis_frames)}, cutoff={cutoff_frame}"
             )
+            logger.info(f"Frame {current_frame_idx} session dicts: {dict_attrs}")
 
         # Prune per-object frame outputs (non-conditioning and conditioning)
         if hasattr(inference_session, "output_dict_per_obj"):
@@ -488,29 +502,62 @@ class SAM3VideoTracker:
                 # conditioning context. Pruning causes failures when the window
                 # catches up to the initial prompt frame.
 
-        # Prune vision_features cache (image embeddings) - major memory consumer
-        # NOTE: Only safe on CUDA. On MPS, this causes dtype mismatch errors.
-        if self._device == "cuda" and hasattr(inference_session, "cached_vision_features"):
-            cached = inference_session.cached_vision_features
-            if isinstance(cached, dict):
-                frames_to_remove = [
-                    f for f in cached.keys()
-                    if f < cutoff_frame and f not in genesis_frames
-                ]
-                for f in frames_to_remove:
-                    del cached[f]
-
         # Prune processed_frames (pixel tensors) - major memory consumer
+        # This is where video frames are stored in the inference session
         # NOTE: Only safe on CUDA. On MPS, this causes dtype mismatch errors.
-        if self._device == "cuda" and hasattr(inference_session, "images"):
-            images = inference_session.images
-            if isinstance(images, dict):
+        if self._device == "cuda" and hasattr(inference_session, "processed_frames"):
+            processed = inference_session.processed_frames
+            if isinstance(processed, dict):
                 frames_to_remove = [
-                    f for f in images.keys()
+                    f for f in processed.keys()
                     if f < cutoff_frame and f not in genesis_frames
                 ]
                 for f in frames_to_remove:
-                    del images[f]
+                    del processed[f]
+
+        # Prune vision features cache if it's a dict-based cache
+        # The cache object may have internal frame-indexed storage
+        if self._device == "cuda" and hasattr(inference_session, "cache"):
+            cache = inference_session.cache
+            # Check if cache has a dict-like storage we can prune
+            if hasattr(cache, "vision_features") and isinstance(cache.vision_features, dict):
+                frames_to_remove = [
+                    f for f in cache.vision_features.keys()
+                    if f < cutoff_frame and f not in genesis_frames
+                ]
+                for f in frames_to_remove:
+                    del cache.vision_features[f]
+            # Also check for cached_features dict
+            if hasattr(cache, "cached_features") and isinstance(cache.cached_features, dict):
+                frames_to_remove = [
+                    f for f in cache.cached_features.keys()
+                    if f < cutoff_frame and f not in genesis_frames
+                ]
+                for f in frames_to_remove:
+                    del cache.cached_features[f]
+
+        # Prune mask_inputs_per_obj and point_inputs_per_obj
+        if self._device == "cuda" and hasattr(inference_session, "mask_inputs_per_obj"):
+            for obj_idx in list(inference_session.mask_inputs_per_obj.keys()):
+                mask_inputs = inference_session.mask_inputs_per_obj[obj_idx]
+                if isinstance(mask_inputs, dict):
+                    frames_to_remove = [
+                        f for f in mask_inputs.keys()
+                        if f < cutoff_frame and f not in genesis_frames
+                    ]
+                    for f in frames_to_remove:
+                        del mask_inputs[f]
+
+        if self._device == "cuda" and hasattr(inference_session, "point_inputs_per_obj"):
+            for obj_idx in list(inference_session.point_inputs_per_obj.keys()):
+                point_inputs = inference_session.point_inputs_per_obj[obj_idx]
+                if isinstance(point_inputs, dict):
+                    frames_to_remove = [
+                        f for f in point_inputs.keys()
+                        if f < cutoff_frame and f not in genesis_frames
+                    ]
+                    for f in frames_to_remove:
+                        del point_inputs[f]
 
         # Prune frame-wise tracker scores (metadata only - safe)
         # Preserve genesis frames here too for consistency
