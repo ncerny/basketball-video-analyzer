@@ -459,6 +459,15 @@ class SAM3VideoTracker:
                 f"Preserving {len(genesis_frames)} genesis frames: {sorted(genesis_frames)[:10]}..."
             )
 
+        # Log memory stats periodically
+        if current_frame_idx % 1000 == 0:
+            import psutil
+            mem = psutil.Process().memory_info()
+            logger.info(
+                f"Frame {current_frame_idx} memory: RSS={mem.rss / 1024**3:.1f}GB, "
+                f"genesis_frames={len(genesis_frames)}, cutoff={cutoff_frame}"
+            )
+
         # Prune per-object frame outputs (non-conditioning and conditioning)
         if hasattr(inference_session, "output_dict_per_obj"):
             for obj_idx in list(inference_session.output_dict_per_obj.keys()):
@@ -479,11 +488,29 @@ class SAM3VideoTracker:
                 # conditioning context. Pruning causes failures when the window
                 # catches up to the initial prompt frame.
 
-        # NOTE: Do NOT prune these - causes MPS dtype mismatch errors:
-        # - vision_features cache (image embeddings)
-        # - cond_frame_outputs (conditioning context)
-        # - processed_frames (pixel tensors)
-        # - mask_inputs_per_obj / point_inputs_per_obj (prompts)
+        # Prune vision_features cache (image embeddings) - major memory consumer
+        # NOTE: Only safe on CUDA. On MPS, this causes dtype mismatch errors.
+        if self._device == "cuda" and hasattr(inference_session, "cached_vision_features"):
+            cached = inference_session.cached_vision_features
+            if isinstance(cached, dict):
+                frames_to_remove = [
+                    f for f in cached.keys()
+                    if f < cutoff_frame and f not in genesis_frames
+                ]
+                for f in frames_to_remove:
+                    del cached[f]
+
+        # Prune processed_frames (pixel tensors) - major memory consumer
+        # NOTE: Only safe on CUDA. On MPS, this causes dtype mismatch errors.
+        if self._device == "cuda" and hasattr(inference_session, "images"):
+            images = inference_session.images
+            if isinstance(images, dict):
+                frames_to_remove = [
+                    f for f in images.keys()
+                    if f < cutoff_frame and f not in genesis_frames
+                ]
+                for f in frames_to_remove:
+                    del images[f]
 
         # Prune frame-wise tracker scores (metadata only - safe)
         # Preserve genesis frames here too for consistency
