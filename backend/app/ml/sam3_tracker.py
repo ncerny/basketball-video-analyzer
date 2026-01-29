@@ -196,6 +196,7 @@ class SAM3VideoTracker:
                 dtype = torch.bfloat16 if self._config.use_half_precision else torch.float32
 
             self._dtype = dtype
+            logger.info(f"Using dtype: {dtype} (half_precision={self._config.use_half_precision})")
 
             # Try local model path first (for Docker), then HuggingFace
             model_path = self._find_model_path()
@@ -510,10 +511,12 @@ class SAM3VideoTracker:
                     pruned.add(genesis)  # Always keep genesis
                     inference_session.frames_tracked_per_obj[obj_idx] = pruned
 
-        # Force garbage collection
+        # Force garbage collection periodically (every 100 frames, not every frame)
+        # Doing it every frame adds significant overhead
         # NOTE: Do NOT call torch.mps.empty_cache() here - it causes dtype
         # mismatch errors in subsequent MPS matrix multiplications
-        gc.collect()
+        if current_frame_idx % 100 == 0:
+            gc.collect()
 
     def _convert_to_frame_detections(
         self,
