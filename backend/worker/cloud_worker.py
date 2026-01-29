@@ -21,6 +21,14 @@ from worker.runpod_service import get_runpod_service
 
 logger = logging.getLogger(__name__)
 
+# Stall detection: fail job if no progress for this many seconds
+STALL_TIMEOUT_SECONDS = 300  # 5 minutes
+
+
+class ProcessingStallError(Exception):
+    """Raised when processing stalls (no progress for too long)."""
+    pass
+
 
 class CloudWorker:
     """Worker that polls R2 for pending jobs and processes them."""
@@ -176,12 +184,48 @@ class CloudWorker:
         detections = []
         frame_count = 0
 
+        # Stall detection state (shared with watchdog)
+        progress_state = {"last_frame": 0, "last_time": time.time(), "started": False}
+        stall_event = asyncio.Event()  # Set by watchdog if stall detected
+
+        async def stall_watchdog():
+            """Background task that monitors for processing stalls."""
+            while not stall_event.is_set():
+                await asyncio.sleep(30)  # Check every 30 seconds
+
+                # Only check after processing has started
+                if not progress_state["started"]:
+                    continue
+
+                stall_duration = time.time() - progress_state["last_time"]
+                if stall_duration > STALL_TIMEOUT_SECONDS:
+                    logger.error(
+                        f"Processing stall detected! No progress for {stall_duration:.0f}s "
+                        f"(stuck at frame {progress_state['last_frame']}/{total_frames})"
+                    )
+                    stall_event.set()
+                    return
+
+        # Start watchdog task
+        watchdog_task = asyncio.create_task(stall_watchdog())
+
         try:
             pipeline = SAM3DetectionPipeline(confidence_threshold=confidence)
 
             async for frame_detections in pipeline.process_video(
                 video_path, sample_interval=sample_interval
             ):
+                # Check if watchdog detected a stall
+                if stall_event.is_set():
+                    raise ProcessingStallError(
+                        f"Processing stalled at frame {progress_state['last_frame']}/{total_frames} "
+                        f"(no progress for {STALL_TIMEOUT_SECONDS}s)"
+                    )
+
+                # Update progress state for watchdog
+                progress_state["started"] = True
+                progress_state["last_time"] = time.time()
+
                 for det in frame_detections.detections:
                     detections.append({
                         "frame": frame_detections.frame_number,
@@ -192,6 +236,7 @@ class CloudWorker:
 
                 frame_count += 1
                 job.frames_processed = frame_count
+                progress_state["last_frame"] = frame_count
 
                 # Update progress every 50 frames (async to allow signal handling)
                 if frame_count % 50 == 0:
@@ -212,6 +257,14 @@ class CloudWorker:
                         logger.warning(f"Failed to update progress for {job.job_id}: {e}")
 
         finally:
+            # Cancel watchdog task
+            stall_event.set()  # Signal watchdog to stop
+            watchdog_task.cancel()
+            try:
+                await watchdog_task
+            except asyncio.CancelledError:
+                pass
+
             # Release GPU/MPS resources held by the pipeline
             if pipeline is not None:
                 del pipeline
